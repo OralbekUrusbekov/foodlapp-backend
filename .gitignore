@@ -1,0 +1,89 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environments
+.env
+.venv
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+
+# Logs
+*.log
+
+# SQLite database
+*.sqlite3
+db.sqlite3
+
+# Environment variables
+.env.*
+*.env
+
+# FastAPI specific
+*.db
+*.sqlite
+
+# Uvicorn / Gunicorn
+*.pid
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# mypy
+.mypy_cache/
+.dmypy.json
+
+# Ruff / lint
+.ruff_cache/
+
+# Coverage
+coverage.xml
+
+# Docker
+docker-compose.override.yml
+
+# Static / media (if generated)
+staticfiles/
+media/
+
+# Alembic (if you use migrations)
+alembic/versions/*.pyc
+
+# Node (if frontend inside project)
+node_modules/
