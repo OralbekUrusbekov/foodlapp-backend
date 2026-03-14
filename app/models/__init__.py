@@ -6,6 +6,7 @@ from .restaurant import Restaurant
 from .user import User
 from .branch import Branch
 from .food import Food
+from .FoodImage import FoodImage
 from .subscription import Subscription, UserSubscription
 from .order import Order, OrderItem
 
@@ -15,6 +16,7 @@ __all__ = [
     "User",
     "Branch",
     "Food",
+    "FoodImage",
     "Subscription",
     "UserSubscription",
     "Order",

@@ -7,7 +7,7 @@ from . import Base
 class OrderStatus(str, enum.Enum):
     PENDING = "pending"
     ACCEPTED = "accepted"
-    COOKING = "cooking"
+    COOKING = "cooking"  # Временно оставим, но возможно нужно изменить
     READY = "ready"
     GIVEN = "given"
     CANCELLED = "cancelled"
@@ -33,6 +33,8 @@ class Order(Base):
     qr_code = Column(String, unique=True)
     qr_used = Column(Boolean, default=False)
     qr_expire_at = Column(DateTime)
+    paid_by_subscription = Column(Boolean, default=False)
+    subscription_id = Column(Integer, ForeignKey("subscriptions.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -40,6 +42,7 @@ class Order(Base):
     user = relationship("User", back_populates="orders")
     branch = relationship("Branch", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    subscription = relationship("Subscription", back_populates="orders")
 
 class OrderItem(Base):
     __tablename__ = "order_items"
@@ -49,6 +52,7 @@ class OrderItem(Base):
     food_id = Column(Integer, ForeignKey("foods.id"), nullable=False)
     quantity = Column(Integer, default=1)
     price = Column(Float, nullable=False)
+    food_name = Column(String, nullable=False)
     subscription_id = Column(Integer, ForeignKey("subscriptions.id"), nullable=True)
     paid_by_subscription = Column(Boolean, default=False)
 

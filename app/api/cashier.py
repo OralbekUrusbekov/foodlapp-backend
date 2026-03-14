@@ -64,11 +64,18 @@ def verify_qr(qr_code: str, db: Session = Depends(get_db), current_user: User = 
 @router.post("/orders/{order_id}/accept")
 def accept_order(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_cashier_user)):
     """Заказды қабылдау"""
-    order = OrderService.accept_order(db, order_id)
-    return {
-        "message": "Заказ қабылданды",
-        "order": order
-    }
+    try:
+        print(f"Accepting order {order_id} by cashier {current_user.id}")
+        order = OrderService.accept_order(db, order_id)
+        return {
+            "message": "Заказ қабылданды",
+            "order": order
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Accept order error: {e}")
+        raise HTTPException(status_code=400, detail=f"Заказды қабылдау қатесі: {str(e)}")
 
 @router.post("/orders/{order_id}/complete")
 def complete_order(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_cashier_user)):
@@ -77,4 +84,15 @@ def complete_order(order_id: int, db: Session = Depends(get_db), current_user: U
     return {
         "message": "Заказ дайын",
         "order": order
+    }
+
+@router.post("/orders/{order_id}/generate-qr")
+def generate_order_qr(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_cashier_user)):
+    """Заказ үшін QR код генерациялау"""
+    qr_data = OrderService.generate_order_qr(db, order_id, current_user.branch_id)
+    return {
+        "message": "QR код сәтті жасалды",
+        "qr_code": qr_data["qr_code"],
+        "expires_at": qr_data["expires_at"],
+        "order_id": order_id
     }

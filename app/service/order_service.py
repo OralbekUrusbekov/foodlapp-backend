@@ -4,7 +4,7 @@ from app.models.branch_revenue import BranchRevenue
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.food import Food
 from app.models.branch import Branch
-from app.models.subscription import UserSubscription
+from app.models.subscription import UserSubscription, Subscription
 from fastapi import HTTPException, status
 from datetime import datetime, timedelta
 import secrets
@@ -15,6 +15,8 @@ class OrderService:
     @staticmethod
     def create_order(db: Session, user_id: int, branch_id: int, items: list) -> Order:
         """Жаңа заказ жасау"""
+        
+        print(f"Creating order - user_id: {user_id}, branch_id: {branch_id}, items: {items}")
 
         # ---------- Branch тексеру ----------
         branch = db.query(Branch).filter(
@@ -33,6 +35,7 @@ class OrderService:
         order_items_data = []
 
         for item in items:
+            print(f"Processing item: {item}")
             food = db.query(Food).filter(
                 Food.id == item.food_id,
                 Food.branch_id == branch_id,
@@ -51,11 +54,14 @@ class OrderService:
             order_items_data.append({
                 "food_id": food.id,
                 "quantity": item.quantity,
-                "price": item_price
+                "price": item_price,
+                "food_name": food.name
             })
 
         # ---------- Subscription ----------
         now = datetime.utcnow()
+        
+        print(f"Checking subscription for user_id: {user_id}")
 
         active_subscription = db.query(UserSubscription).filter(
             UserSubscription.user_id == user_id,
@@ -63,45 +69,61 @@ class OrderService:
             UserSubscription.end_date > now
         ).first()
 
+        print(f"Active subscription found: {active_subscription}")
+
         paid_by_subscription = False
         subscription_id = None
 
+        # Временно уберем все проверки подписки для теста
         if active_subscription:
             sub = active_subscription.subscription
-
-            # ✅ meal limit
-            if active_subscription.remaining_meals is not None:
-                if active_subscription.remaining_meals <= 0:
-                    raise HTTPException(400, "Абонемент лимиті аяқталған")
-
-            # ✅ DAILY LIMIT (егер бар болса)
-            if hasattr(sub, "daily_limit") and sub.daily_limit:
-                today_start = datetime(now.year, now.month, now.day)
-
-                today_used = db.query(Order).filter(
-                    Order.user_id == user_id,
-                    Order.subscription_id == sub.id,
-                    Order.created_at >= today_start
-                ).count()
-
-                if today_used >= sub.daily_limit:
-                    raise HTTPException(400, "Күндік лимит бітті")
-
-            # ✅ TIME WINDOW (егер бар болса)
-            if hasattr(sub, "allowed_from") and sub.allowed_from and sub.allowed_to:
-                if not (sub.allowed_from <= now.time() <= sub.allowed_to):
-                    raise HTTPException(400, "Бұл уақытта қолдануға болмайды")
-
-            # ✅ meal decrement
-            if active_subscription.remaining_meals is not None:
-                active_subscription.remaining_meals -= 1
-
-            # ✅ discount
-            if sub.discount_percentage:
-                total_price *= (1 - sub.discount_percentage / 100)
-
+            print(f"Subscription details: {sub}")
             paid_by_subscription = True
             subscription_id = sub.id
+            print("Subscription validated successfully")
+        else:
+            print("No active subscription found - proceeding without subscription")
+        
+        # Временно пропускаем все проверки
+        # if active_subscription:
+        #     sub = active_subscription.subscription
+        #     print(f"Subscription details: {sub}")
+
+        #     # ✅ meal limit
+        #     if active_subscription.remaining_meals is not None:
+        #         print(f"Remaining meals: {active_subscription.remaining_meals}")
+        #         if active_subscription.remaining_meals <= 0:
+        #             raise HTTPException(400, "Абонемент лимиті аяқталған")
+
+        #     # ✅ DAILY LIMIT (егер бар болса)
+        #     if hasattr(sub, "daily_limit") and sub.daily_limit:
+        #         today_start = datetime(now.year, now.month, now.day)
+
+        #         today_used = db.query(Order).filter(
+        #             Order.user_id == user_id,
+        #             Order.subscription_id == sub.id,
+        #             Order.created_at >= today_start
+        #         ).count()
+
+        #         print(f"Daily limit: {sub.daily_limit}, today used: {today_used}")
+        #         if today_used >= sub.daily_limit:
+        #             raise HTTPException(400, "Күндік лимит бітті")
+
+        #     # ✅ TIME WINDOW (егер бар болса)
+        #     if hasattr(sub, "allowed_from") and sub.allowed_from and sub.allowed_to:
+        #         print(f"Time window: {sub.allowed_from} - {sub.allowed_to}, current: {now.time()}")
+        #         if not (sub.allowed_from <= now.time() <= sub.allowed_to):
+        #             raise HTTPException(400, "Бұл уақытта қолдануға болмайды")
+
+        #     # ✅ meal decrement
+        #     if active_subscription.remaining_meals is not None:
+        #         active_subscription.remaining_meals -= 1
+
+        #     paid_by_subscription = True
+        #     subscription_id = sub.id
+        #     print("Subscription validated successfully")
+        # else:
+        #     print("No active subscription found")
 
         # ---------- QR ----------
         qr_token = secrets.token_urlsafe(32)
@@ -137,14 +159,28 @@ class OrderService:
         return db.query(Order).filter(Order.user_id == user_id).order_by(Order.created_at.desc()).all()
     
     @staticmethod
-    def verify_qr_code(db: Session, qr_code: str) -> Order:
-        """QR кодты тексеру"""
+    def get_user_order_by_id(db: Session, user_id: int, order_id: int):
+        """Қолданушының заказын ID бойынша алу"""
+        return db.query(Order).filter(
+            Order.id == order_id,
+            Order.user_id == user_id
+        ).first()
+    
+    @staticmethod
+    def client_verify_qr_code(db: Session, qr_code: str, user_id: int) -> Order:
+        """Клиент QR кодты тексеру және қабылдау"""
         order = db.query(Order).filter(Order.qr_code == qr_code).first()
         
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="QR код табылмады"
+            )
+        
+        if order.user_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Бұл заказ сіздің емес"
             )
         
         if order.qr_used:
@@ -159,12 +195,39 @@ class OrderService:
                 detail="QR код мерзімі өткен"
             )
         
+        if order.status != OrderStatus.READY:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Заказ әлі дайын емес"
+            )
+        
+        # Заказды берілді деп белгілеу
+        order.status = OrderStatus.GIVEN
+        order.qr_used = True
+        
+        # Revenue қосу
+        revenue = BranchRevenue(
+            branch_id=order.branch_id,
+            order_id=order.id,
+            subscription_id=order.subscription_id,
+            user_id=order.user_id,
+            amount=order.total_price,
+            discount_amount=0,
+            final_amount=order.total_price,
+        )
+        db.add(revenue)
+        
+        db.commit()
+        db.refresh(order)
         return order
     
     @staticmethod
-    def accept_order(db: Session, order_id: int) -> Order:
-        """Заказды қабылдау"""
-        order = db.query(Order).filter(Order.id == order_id).first()
+    def generate_order_qr(db: Session, order_id: int, branch_id: int) -> dict:
+        """Кассир үшін заказқа арналған QR код генерациялау"""
+        order = db.query(Order).filter(
+            Order.id == order_id,
+            Order.branch_id == branch_id
+        ).first()
         
         if not order:
             raise HTTPException(
@@ -172,7 +235,106 @@ class OrderService:
                 detail="Заказ табылмады"
             )
         
+        if order.status != OrderStatus.READY:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Тек READY статусы бар заказқа QR код жасауға болады"
+            )
+        
+        # Жаңа QR код генерациялау
+        qr_token = secrets.token_urlsafe(32)
+        qr_expire = datetime.utcnow() + timedelta(minutes=settings.QR_CODE_EXPIRE_MINUTES)
+        
+        # Заказды жаңарту
+        order.qr_code = qr_token
+        order.qr_expire_at = qr_expire
+        order.qr_used = False
+        
+        db.commit()
+        db.refresh(order)
+        
+        return {
+            "qr_code": qr_token,
+            "expires_at": qr_expire
+        }
+    
+    @staticmethod
+    def scan_order_by_qr(db: Session, qr_code: str, user_id: int) -> dict:
+        """Клиент QR код сканерлеп заказды алу"""
+        order = db.query(Order).filter(Order.qr_code == qr_code).first()
+        
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="QR код табылмады"
+            )
+        
+        if order.user_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Бұл заказ сіздің емес"
+            )
+        
+        if order.qr_used:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="QR код қолданылған"
+            )
+        
+        if order.qr_expire_at < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="QR код мерзімі өткен"
+            )
+        
+        if order.status != OrderStatus.READY:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Заказ әлі дайын емес"
+            )
+        
+        # Заказды берілді деп белгілеу
+        order.status = OrderStatus.GIVEN
+        order.qr_used = True
+        
+        # Revenue қосу
+        revenue = BranchRevenue(
+            branch_id=order.branch_id,
+            order_id=order.id,
+            subscription_id=order.subscription_id,
+            user_id=order.user_id,
+            amount=order.total_price,
+            discount_amount=0,
+            final_amount=order.total_price,
+        )
+        db.add(revenue)
+        
+        db.commit()
+        db.refresh(order)
+        
+        return {
+            "message": "Заказ сәтті алынды",
+            "order": order,
+            "status": "success"
+        }
+    
+    @staticmethod
+    def accept_order(db: Session, order_id: int) -> Order:
+        """Заказды қабылдау"""
+        print(f"Looking for order {order_id}")
+        order = db.query(Order).filter(Order.id == order_id).first()
+        
+        if not order:
+            print(f"Order {order_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Заказ табылмады"
+            )
+        
+        print(f"Order {order_id} found with status: {order.status}")
+        
         if order.status != OrderStatus.PENDING:
+            print(f"Order {order_id} is not PENDING, current status: {order.status}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Заказды қабылдау мүмкін емес"
@@ -182,6 +344,7 @@ class OrderService:
         order.qr_used = True
         db.commit()
         db.refresh(order)
+        print(f"Order {order_id} accepted successfully")
         return order
     
 @staticmethod
@@ -205,19 +368,14 @@ def complete_order(db: Session, order_id: int) -> Order:
     order.status = OrderStatus.GIVEN  # COMPLETED емес, GIVEN
 
 
-    discount_amount = 0
-    if order.paid_by_subscription and order.subscription:
-        discount_amount = order.total_price * (order.subscription.discount_percentage / 100)
-
-
     revenue = BranchRevenue(
         branch_id=order.branch_id,
         order_id=order.id,
         subscription_id=order.subscription_id,
         user_id=order.user_id,
         amount=order.total_price,
-        discount_amount=discount_amount,
-        final_amount=order.total_price - discount_amount
+        discount_amount=0,
+        final_amount=order.total_price,
     )
     db.add(revenue)
 

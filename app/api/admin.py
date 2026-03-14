@@ -10,7 +10,7 @@ from app.configuration.security.dependencies import get_admin_user
 from app.models.user import User, UserRole
 from app.models.branch import Branch
 from app.models.restaurant import Restaurant
-from app.models.order import Order
+from app.models.order import Order, OrderItem
 from app.models.subscription import Subscription
 from app.service.auth_service import AuthService
 
@@ -254,21 +254,31 @@ def get_subscription_overview(
         Subscription.is_active == True
     ).count()
 
-    # Бүгін қолданылған абонементтер
+    # Бүгін қолданылған абонементтер (OrderItem арқылы)
     today = datetime.utcnow().date()
-    today_usage = db.query(Order).filter(
-        Order.branch_id.in_(branch_ids),
-        Order.paid_by_subscription == True,
-        Order.subscription_id.isnot(None),
-        func.date(Order.created_at) == today
-    ).count()
+    today_usage = (
+        db.query(func.count(func.distinct(Order.id)))
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            OrderItem.paid_by_subscription == True,
+            OrderItem.subscription_id.isnot(None),
+            func.date(Order.created_at) == today,
+        )
+        .scalar()
+    )
 
-    # Барлық абонемент арқылы жасалған заказдар
-    total_subscription_orders = db.query(Order).filter(
-        Order.branch_id.in_(branch_ids),
-        Order.paid_by_subscription == True,
-        Order.subscription_id.isnot(None)
-    ).count()
+    # Барлық абонемент арқылы жасалған заказдар (OrderItem-ке join)
+    total_subscription_orders = (
+        db.query(func.count(func.distinct(Order.id)))
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            OrderItem.paid_by_subscription == True,
+            OrderItem.subscription_id.isnot(None),
+        )
+        .scalar()
+    )
 
     # Жалпы жеңілдік сомасы (егер discount есептелсе)
     # Бұл үшін BranchRevenue-ге discount поле қосу керек
@@ -297,21 +307,24 @@ def get_daily_subscription_stats(
     start_date = end_date - timedelta(days=days)
 
     # Күндер бойынша топтастыру
-    daily_stats = db.query(
-        func.date(Order.created_at).label('date'),
-        func.count(Order.id).label('total_orders'),
-        func.count(func.distinct(Order.user_id)).label('total_customers')
-    ).filter(
-        Order.branch_id.in_(branch_ids),
-        Order.paid_by_subscription == True,
-        Order.subscription_id.isnot(None),
-        func.date(Order.created_at) >= start_date,
-        func.date(Order.created_at) <= end_date
-    ).group_by(
-        func.date(Order.created_at)
-    ).order_by(
-        func.date(Order.created_at).desc()
-    ).all()
+    daily_stats = (
+        db.query(
+            func.date(Order.created_at).label("date"),
+            func.count(func.distinct(Order.id)).label("total_orders"),
+            func.count(func.distinct(Order.user_id)).label("total_customers"),
+        )
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            OrderItem.paid_by_subscription == True,
+            OrderItem.subscription_id.isnot(None),
+            func.date(Order.created_at) >= start_date,
+            func.date(Order.created_at) <= end_date,
+        )
+        .group_by(func.date(Order.created_at))
+        .order_by(func.date(Order.created_at).desc())
+        .all()
+    )
 
     result = []
     for stat in daily_stats:
@@ -338,20 +351,34 @@ def get_subscription_stats_by_branch(
     result = []
     for branch in branches:
         # Филиалдағы абонемент арқылы жасалған заказдар
-        orders = db.query(Order).filter(
-            Order.branch_id == branch.id,
-            Order.paid_by_subscription == True,
-            Order.subscription_id.isnot(None)
-        ).all()
+        orders = (
+            db.query(Order)
+            .join(OrderItem, OrderItem.order_id == Order.id)
+            .filter(
+                Order.branch_id == branch.id,
+                OrderItem.paid_by_subscription == True,
+                OrderItem.subscription_id.isnot(None),
+            )
+            .all()
+        )
 
         # Әр филиалдағы ең көп қолданылған абонемент
-        top_subscription = db.query(
-            Subscription.name,
-            func.count(Order.id).label('count')
-        ).join(Order, Order.subscription_id == Subscription.id).filter(
-            Order.branch_id == branch.id,
-            Order.paid_by_subscription == True
-        ).group_by(Subscription.name).order_by(func.count(Order.id).desc()).first()
+        top_subscription = (
+            db.query(
+                Subscription.name,
+                func.count(func.distinct(Order.id)).label("count"),
+            )
+            .join(OrderItem, OrderItem.subscription_id == Subscription.id)
+            .join(Order, Order.id == OrderItem.order_id)
+            .filter(
+                Order.branch_id == branch.id,
+                OrderItem.paid_by_subscription == True,
+                OrderItem.subscription_id.isnot(None),
+            )
+            .group_by(Subscription.name)
+            .order_by(func.count(func.distinct(Order.id)).desc())
+            .first()
+        )
 
         result.append({
             "branch_id": branch.id,
@@ -376,29 +403,33 @@ def get_subscription_stats_by_type(
     branch_ids = [b[0] for b in branch_ids]
 
     # Әр абонемент бойынша статистика
-    stats = db.query(
-        Subscription.id,
-        Subscription.name,
-        Subscription.price,
-        Subscription.duration_days,
-        Subscription.meal_limit,
-        Subscription.discount_percentage,
-        func.count(Order.id).label('total_orders'),
-        func.count(func.distinct(Order.user_id)).label('total_users')
-    ).join(Order, Order.subscription_id == Subscription.id).filter(
-        Order.branch_id.in_(branch_ids),
-        Order.paid_by_subscription == True,
-        Order.subscription_id.isnot(None)
-    ).group_by(
-        Subscription.id,
-        Subscription.name,
-        Subscription.price,
-        Subscription.duration_days,
-        Subscription.meal_limit,
-        Subscription.discount_percentage
-    ).order_by(
-        func.count(Order.id).desc()
-    ).all()
+    stats = (
+        db.query(
+            Subscription.id,
+            Subscription.name,
+            Subscription.price,
+            Subscription.duration_days,
+            Subscription.meal_limit,
+            func.count(func.distinct(Order.id)).label("total_orders"),
+            func.count(func.distinct(Order.user_id)).label("total_users"),
+        )
+        .join(OrderItem, OrderItem.subscription_id == Subscription.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            OrderItem.paid_by_subscription == True,
+            OrderItem.subscription_id.isnot(None),
+        )
+        .group_by(
+            Subscription.id,
+            Subscription.name,
+            Subscription.price,
+            Subscription.duration_days,
+            Subscription.meal_limit,
+        )
+        .order_by(func.count(func.distinct(Order.id)).desc())
+        .all()
+    )
 
     result = []
     for stat in stats:
@@ -408,7 +439,6 @@ def get_subscription_stats_by_type(
             "price": stat.price,
             "duration_days": stat.duration_days,
             "meal_limit": stat.meal_limit,
-            "discount_percentage": stat.discount_percentage,
             "total_orders": stat.total_orders,
             "total_users": stat.total_users
         })
@@ -428,21 +458,25 @@ def get_subscription_stats_custom_range(
     branch_ids = [b[0] for b in branch_ids]
 
     # Базалық фильтр
-    query = db.query(
-        Branch.id.label('branch_id'),
-        Branch.name.label('branch_name'),
-        Subscription.id.label('subscription_id'),
-        Subscription.name.label('subscription_name'),
-        func.count(Order.id).label('total_orders'),
-        func.count(func.distinct(Order.user_id)).label('total_customers')
-    ).join(Order, Order.branch_id == Branch.id
-           ).join(Subscription, Subscription.id == Order.subscription_id
-                  ).filter(
-        Branch.id.in_(branch_ids),
-        Order.paid_by_subscription == True,
-        Order.subscription_id.isnot(None),
-        func.date(Order.created_at) >= request.start_date,
-        func.date(Order.created_at) <= request.end_date
+    query = (
+        db.query(
+            Branch.id.label("branch_id"),
+            Branch.name.label("branch_name"),
+            Subscription.id.label("subscription_id"),
+            Subscription.name.label("subscription_name"),
+            func.count(func.distinct(Order.id)).label("total_orders"),
+            func.count(func.distinct(Order.user_id)).label("total_customers"),
+        )
+        .join(Order, Order.branch_id == Branch.id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .join(Subscription, Subscription.id == OrderItem.subscription_id)
+        .filter(
+            Branch.id.in_(branch_ids),
+            OrderItem.paid_by_subscription == True,
+            OrderItem.subscription_id.isnot(None),
+            func.date(Order.created_at) >= request.start_date,
+            func.date(Order.created_at) <= request.end_date,
+        )
     )
 
     # Фильтрлер
@@ -499,30 +533,33 @@ def export_subscription_stats(
         end_date = datetime.utcnow().date().isoformat()
 
     # Деректерді алу
-    stats = db.query(
-        func.date(Order.created_at).label('date'),
-        Branch.name.label('branch_name'),
-        Subscription.name.label('subscription_name'),
-        User.full_name.label('user_name'),
-        Order.total_price,
-        Subscription.discount_percentage
-    ).join(Branch, Branch.id == Order.branch_id
-           ).join(Subscription, Subscription.id == Order.subscription_id
-                  ).join(User, User.id == Order.user_id
-                         ).filter(
-        Order.branch_id.in_(branch_ids),
-        Order.paid_by_subscription == True,
-        Order.subscription_id.isnot(None),
-        func.date(Order.created_at) >= start_date,
-        func.date(Order.created_at) <= end_date
-    ).order_by(
-        Order.created_at.desc()
-    ).all()
+    stats = (
+        db.query(
+            func.date(Order.created_at).label("date"),
+            Branch.name.label("branch_name"),
+            Subscription.name.label("subscription_name"),
+            User.full_name.label("user_name"),
+            Order.total_price,
+        )
+        .join(Branch, Branch.id == Order.branch_id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .join(Subscription, Subscription.id == OrderItem.subscription_id)
+        .join(User, User.id == Order.user_id)
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            OrderItem.paid_by_subscription == True,
+            OrderItem.subscription_id.isnot(None),
+            func.date(Order.created_at) >= start_date,
+            func.date(Order.created_at) <= end_date,
+        )
+        .order_by(Order.created_at.desc())
+        .all()
+    )
 
     # CSV генерация
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Күні', 'Филиал', 'Абонемент', 'Клиент', 'Заказ сомасы', 'Жеңілдік %'])
+    writer.writerow(['Күні', 'Филиал', 'Абонемент', 'Клиент', 'Заказ сомасы'])
 
     for stat in stats:
         writer.writerow([
@@ -531,7 +568,6 @@ def export_subscription_stats(
             stat.subscription_name,
             stat.user_name,
             stat.total_price,
-            stat.discount_percentage
         ])
 
     return {

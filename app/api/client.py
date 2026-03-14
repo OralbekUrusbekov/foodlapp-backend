@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+from pydantic import ValidationError
 
 from app.models import Restaurant
 from app.database.connection import get_db
@@ -8,13 +9,21 @@ from app.configuration.security.dependencies import get_client_user
 from app.service.order_service import OrderService
 from app.service.subscription_service import SubscriptionService
 from app.service.food_service import FoodService
-from app.schemas.order_dto import CreateOrderRequest
+from app.schemas.order_dto import CreateOrderRequest, OrderResponse
 from app.schemas.subscription_dto import SubscriptionResponse, UserSubscriptionResponse, PurchaseSubscriptionRequest
 from app.schemas.food_dto import FoodResponse
 from app.models.user import User
 from app.models.branch import Branch
 
 router = APIRouter()
+
+# Ресторандар
+@router.get("/restaurants")
+def get_all_restaurants(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    """Барлық белсенді асханаларды көру"""
+    from sqlalchemy.orm import joinedload
+    return db.query(Restaurant).options(joinedload(Restaurant.branches)).filter(Restaurant.is_active == True).all()
+
 
 # Филиалдар
 @router.get("/restaurants/{restaurant_id}/branches")
@@ -30,41 +39,12 @@ def get_branches_by_restaurant(
 
 
 
-@router.get("/restaurants")
-def get_restaurants(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_client_user)
-):
-    restaurants = db.query(Restaurant).filter(Restaurant.is_active == True).all()
-    
-    # Әр ресторанға филиалдарды қосу
-    result = []
-    for restaurant in restaurants:
-        branches = db.query(Branch).filter(
-            Branch.restaurant_id == restaurant.id,
-            Branch.is_active == True
-        ).all()
-        
-        restaurant_data = {
-            "id": restaurant.id,
-            "name": restaurant.name,
-            "description": restaurant.description,
-            "logo_url": restaurant.logo_url,
-            "is_active": restaurant.is_active,
-            "branches": [
-                {
-                    "id": branch.id,
-                    "name": branch.name,
-                    "address": branch.address,
-                    "phone": branch.phone,
-                    "is_active": branch.is_active
-                }
-                for branch in branches
-            ]
-        }
-        result.append(restaurant_data)
-    
-    return result
+@router.get("/branch/{branch_id}")
+def get_branch(branch_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    branch = db.query(Branch).filter(Branch.id == branch_id, Branch.is_active == True).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Филиал табылмады немесе белсенді емес")
+    return branch
 
 
 # Тағамдар
@@ -112,16 +92,36 @@ def create_order(
     current_user: User = Depends(get_client_user)
 ):
     """Жаңа заказ жасау"""
-    order = OrderService.create_order(
-        db, current_user.id, request.branch_id, request.items
-    )
-    return order
+    try:
+        print(f"Received order request: {request}")
+        order = OrderService.create_order(
+            db, current_user.id, request.branch_id, request.items
+        )
+        return order
+    except ValidationError as e:
+        print(f"Validation error: {e}")
+        raise HTTPException(status_code=422, detail=f"Валидация қатесі: {e.errors()}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Create order error: {e}")
+        print(f"Request data: {request}")
+        print(f"User ID: {current_user.id}")
+        raise HTTPException(status_code=400, detail=f"Заказ жасау қатесі: {str(e)}")
 
 @router.get("/orders")
 def get_my_orders(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Менің заказдарым"""
     orders = OrderService.get_user_orders(db, current_user.id)
     return orders
+
+@router.get("/orders/{order_id}")
+def get_order_by_id(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    """Заказды ID бойынша алу"""
+    order = OrderService.get_user_order_by_id(db, current_user.id, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Заказ табылмады")
+    return order
 
 @router.get("/orders/last")
 def get_last_order(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
@@ -135,16 +135,22 @@ def get_last_order(db: Session = Depends(get_db), current_user: User = Depends(g
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     return order
 
-@router.get("/orders/{order_id}")
-def get_order(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
-    """Нақты заказды көру"""
-    from app.models.order import Order
-    order = db.query(Order).filter(Order.id == order_id, Order.user_id == current_user.id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Заказ табылмады")
-    return order
+@router.post("/orders/verify-qr/{qr_code}")
+def client_verify_qr(qr_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    """Клиент QR кодты тексеру және қабылдау"""
+    order = OrderService.client_verify_qr_code(db, qr_code, current_user.id)
+    return {
+        "message": "Заказ қабылданды",
+        "order": order
+    }
 
-@router.get("/menu/today", response_model=List[FoodResponse])
+@router.post("/orders/scan/{qr_code}")
+def scan_order_qr(qr_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    """Клиент QR код сканерлеу арқылы заказды алу"""
+    result = OrderService.scan_order_by_qr(db, qr_code, current_user.id)
+    return result
+
+@router.get("/menu/today")
 def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Бүгінгі мәзірді көру"""
     from datetime import datetime

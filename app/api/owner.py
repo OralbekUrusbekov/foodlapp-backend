@@ -240,25 +240,26 @@ class SubscriptionCreate(BaseModel):
     price: float
     duration_days: int
     meal_limit: int | None = None
-    discount_percentage: float = 0.0
 
     daily_limit: int | None = None
     allowed_from: time | None = None
     allowed_to: time | None = None
     branch_restriction: bool = False
 
+
 @router.post("/subscriptions", status_code=201)
 def create_subscription(
     data: SubscriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_owner_user)
+    current_user: User = Depends(get_owner_user),
 ):
     try:
-        sub = Subscription(**data.model_dump())
-
         if data.allowed_from and data.allowed_to:
             if data.allowed_from >= data.allowed_to:
                 raise HTTPException(400, "allowed_from < allowed_to болуы керек")
+
+        # GLOBAL абонемент – филиалға байламаймыз
+        sub = Subscription(**data.model_dump())
 
         db.add(sub)
         db.commit()
@@ -266,14 +267,16 @@ def create_subscription(
 
         return sub
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         print(e)
 
-
         raise HTTPException(
             status_code=500,
-            detail="Абонемент жасау кезінде қате пайда болды"
+            detail="Абонемент жасау кезінде қате пайда болды",
         )
 
 

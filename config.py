@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import os
 
@@ -6,9 +6,9 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/foodlab_db"
     SECRET_KEY: str = "super_secret_long_random_key_for_canteen_app_2025_oralbek_project_12345"
-    AUTH_GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID")
-    AUTH_GOOGLE_SECRET_ID:str = os.getenv("GOOGLE_CLIENT_SECRET")
 
+    AUTH_GOOGLE_CLIENT_ID: str
+    AUTH_GOOGLE_SECRET_ID: str 
 
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET_NAME:str = "free - cloud"
     AWS_S3_REGION_NAME:str = "us - east - 1"
     AWS_S3_ENDPOINT_URL:str = "https: // object.pscloud.io"
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 @lru_cache()

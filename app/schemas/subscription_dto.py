@@ -9,7 +9,7 @@ class SubscriptionResponse(BaseModel):
     price: float
     duration_days: int
     meal_limit: Optional[int]
-    discount_percentage: float
+    discount_percentage: Optional[float] = 0.0
     is_active: bool
     
     class Config:

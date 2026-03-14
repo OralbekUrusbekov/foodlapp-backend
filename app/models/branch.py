@@ -23,6 +23,4 @@ class Branch(Base):
     foods = relationship("Food", back_populates="branch")
     orders = relationship("Order", back_populates="branch")
 
-
-
     users = relationship("User", back_populates="branch", foreign_keys="[User.branch_id]")

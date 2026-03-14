@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
+from pydantic import ConfigDict
+
 
 class FoodResponse(BaseModel):
     id: int
@@ -8,12 +10,11 @@ class FoodResponse(BaseModel):
     price: float
     calories: Optional[int]
     ingredients: Optional[str]
-    image_url: Optional[str]
+    image_url: Optional[str] = None
     is_available: bool
     branch_id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class CreateFoodRequest(BaseModel):
     name: str

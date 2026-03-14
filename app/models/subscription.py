@@ -1,9 +1,8 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Time, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from . import Base
-from sqlalchemy import Time
 
+from . import Base
 
 
 class Subscription(Base):
@@ -17,7 +16,6 @@ class Subscription(Base):
     duration_days = Column(Integer, nullable=False)
 
     meal_limit = Column(Integer)
-    discount_percentage = Column(Float, default=0.0)
 
     is_active = Column(Boolean, default=True)
 
@@ -26,9 +24,9 @@ class Subscription(Base):
     allowed_to = Column(Time, nullable=True)
     branch_restriction = Column(Boolean, default=False)
 
-
     # GLOBAL subscription — branch байланыс жоқ
     user_subscriptions = relationship("UserSubscription", back_populates="subscription")
+    orders = relationship("Order", back_populates="subscription")
 
 
 class UserSubscription(Base):
