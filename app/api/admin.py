@@ -210,6 +210,7 @@ class CreateRegularFoodRequest(BaseModel):
     price: float
     calories: int | None = None
     ingredients: str | None = None
+    image_url: str | None = None
 
 @router.post("/foods", status_code=201)
 def create_regular_food(
@@ -227,6 +228,7 @@ def create_regular_food(
         price=food_data.price,
         calories=food_data.calories,
         ingredients=food_data.ingredients,
+        image_url=food_data.image_url,
         menu_type=MenuType.REGULAR,
         restaurant_id=restaurant.id
     )
@@ -241,6 +243,7 @@ def create_regular_food(
         "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
+        "image_url": food.image_url,
         "menu_type": food.menu_type.value
     }
 
@@ -266,6 +269,7 @@ def get_regular_foods(
             "price": f.price,
             "calories": f.calories,
             "ingredients": f.ingredients,
+            "image_url": f.image_url,
             "menu_type": f.menu_type.value
         }
         for f in foods
@@ -277,6 +281,7 @@ class UpdateRegularFoodRequest(BaseModel):
     price: float | None = None
     calories: int | None = None
     ingredients: str | None = None
+    image_url: str | None = None
 
 @router.put("/foods/{food_id}")
 def update_regular_food(
@@ -311,6 +316,7 @@ def update_regular_food(
         "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
+        "image_url": food.image_url,
         "menu_type": food.menu_type.value
     }
 

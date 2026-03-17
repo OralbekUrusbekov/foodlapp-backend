@@ -464,6 +464,7 @@ def get_owner_foods(
                 "price": f.price,
                 "calories": f.calories,
                 "ingredients": f.ingredients,
+                "image_url": f.image_url,
                 "menu_type": m_type
             })
         
@@ -481,6 +482,7 @@ class CreateSubscriptionFoodRequest(BaseModel):
     price: float
     calories: int | None = None
     ingredients: str | None = None
+    image_url: str | None = None
 
 @router.post("/foods", status_code=201)
 def create_subscription_food(
@@ -497,6 +499,7 @@ def create_subscription_food(
         price=food_data.price,
         calories=food_data.calories,
         ingredients=food_data.ingredients,
+        image_url=food_data.image_url,
         menu_type=MenuType.SUBSCRIPTION,
         owner_id=current_user.id
     )
@@ -511,6 +514,7 @@ def create_subscription_food(
         "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
+        "image_url": food.image_url,
         "menu_type": food.menu_type.value
     }
 
@@ -520,6 +524,7 @@ class UpdateSubscriptionFoodRequest(BaseModel):
     price: float | None = None
     calories: int | None = None
     ingredients: str | None = None
+    image_url: str | None = None
 
 @router.put("/foods/{food_id}")
 def update_subscription_food(
@@ -552,6 +557,7 @@ def update_subscription_food(
         "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
+        "image_url": food.image_url,
         "menu_type": food.menu_type.value
     }
 

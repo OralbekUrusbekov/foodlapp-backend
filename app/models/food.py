@@ -18,6 +18,7 @@ class Food(Base):
     price = Column(Float, nullable=False)
     calories = Column(Integer)
     ingredients = Column(Text)
+    image_url = Column(String, nullable=True)
     
     menu_type = Column(SQLAlchemyEnum(MenuType), default=MenuType.REGULAR, nullable=False)
     

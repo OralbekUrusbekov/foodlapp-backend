@@ -47,6 +47,28 @@ def get_branch(branch_id: int, db: Session = Depends(get_db), current_user: User
     return branch
 
 
+@router.get("/branches")
+def get_all_branches(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    """Барлық белсенді филиалдарды алу (басты бет үшін)"""
+    from sqlalchemy.orm import joinedload
+    branches = db.query(Branch).options(joinedload(Branch.restaurant)).filter(Branch.is_active == True).all()
+    
+    result = []
+    for b in branches:
+        result.append({
+            "id": b.id,
+            "name": b.name,
+            "address": b.address,
+            "phone": b.phone,
+            "opening_time": b.opening_time.strftime("%H:%M") if b.opening_time else None,
+            "closing_time": b.closing_time.strftime("%H:%M") if b.closing_time else None,
+            "restaurant_id": b.restaurant_id,
+            "restaurant_name": b.restaurant.name,
+            "restaurant_logo": b.restaurant.logo_url
+        })
+    return result
+
+
 @router.get("/foods/{branch_id}")
 def get_foods(branch_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Филиал бойынша қолжетімді тағамдарды алу"""
@@ -130,7 +152,7 @@ def get_foods(branch_id: int, db: Session = Depends(get_db), current_user: User 
             "price": f.price,
             "calories": f.calories,
             "ingredients": f.ingredients,
-            "image_url": f.images[0].url if f.images and len(f.images) > 0 else None,
+            "image_url": f.image_url or (f.images[0].url if f.images and len(f.images) > 0 else None),
             "menu_type": f.menu_type.value if hasattr(f.menu_type, 'value') else f.menu_type,
             "can_order_sub": can_order_sub if f.id in allowed_sub_food_ids else True # for regular foods it is always orderable via money
         }
@@ -315,7 +337,7 @@ def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(g
                     "name": food.name,
                     "description": food.description,
                     "price": food.price,
-                    "image_url": food.images[0].url if food.images and len(food.images) > 0 else None,
+                    "image_url": food.image_url or (food.images[0].url if food.images and len(food.images) > 0 else None),
                     "menu_type": m_type,
                     "branch_id": bm.branch_id,
                     "can_order_sub": can_order_sub if m_type == "SUBSCRIPTION" else True

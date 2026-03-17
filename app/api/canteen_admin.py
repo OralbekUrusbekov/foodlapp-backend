@@ -83,6 +83,7 @@ def get_branch_foods(db: Session = Depends(get_db), current_user: User = Depends
             "price": f.price,
             "calories": f.calories,
             "ingredients": f.ingredients,
+            "image_url": f.image_url,
             "menu_type": f.menu_type.value,
             "is_available": availability_map.get(f.id, False) # Default to false if not in BranchMenu
         })
