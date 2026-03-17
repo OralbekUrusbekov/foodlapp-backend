@@ -5,10 +5,16 @@ Base = declarative_base()
 from .restaurant import Restaurant
 from .user import User
 from .branch import Branch
-from .food import Food
+from .food import Food, MenuType
 from .FoodImage import FoodImage
-from .subscription import Subscription, UserSubscription
+from .subscription import Subscription, UserSubscription, SubscriptionMenu
 from .order import Order, OrderItem
+from .branch_menu import BranchMenu
+from .notification import Notification
+from .branch_revenue import BranchRevenue
+from .ai_profile import AIProfile
+from .weight_history import WeightHistory
+from .ration import Ration
 
 __all__ = [
     "Base",
@@ -16,9 +22,17 @@ __all__ = [
     "User",
     "Branch",
     "Food",
+    "MenuType",
     "FoodImage",
     "Subscription",
     "UserSubscription",
+    "SubscriptionMenu",
     "Order",
-    "OrderItem"
+    "OrderItem",
+    "BranchMenu",
+    "Notification",
+    "BranchRevenue",
+    "AIProfile",
+    "WeightHistory",
+    "Ration"
 ]

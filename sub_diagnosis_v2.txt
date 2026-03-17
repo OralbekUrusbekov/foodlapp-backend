@@ -1,0 +1,15 @@
+--- Subscriptions ---
+ID: 11, Name: Қарапайым, Menu Items Count: 1, Daily Limit: 1, Time: 16:16:12.455000-16:30:12.455000
+ID: 12, Name: Super, Menu Items Count: 1, Daily Limit: None, Time: None-None
+
+--- User Subscriptions ---
+User: Aibek Kemel (ID: 1), Sub: Қарапайым (SubID: 11), Remaining: 20, End: 2026-04-14 19:23:41.913304
+User: Aibekss (ID: 12), Sub: Super (SubID: 12), Remaining: 9, End: 2026-04-15 23:04:52.371681
+
+--- Subscription Menu Breakdown ---
+
+Sub: Қарапайым (ID: 11)
+  - Комбо 1 (ID: 5, Type: MenuType.SUBSCRIPTION)
+
+Sub: Super (ID: 12)
+  - Комбо 123 (ID: 4, Type: MenuType.SUBSCRIPTION)

@@ -40,68 +40,103 @@ def branch_subscription_stats(
         .all()
     )
 
-    return rows
+    return [{"name": r[0], "count": r[1]} for r in rows]
 
 
 
 # Тағамдарды басқару
-@router.get("/foods", response_model=List[FoodResponse])
+@router.get("/foods")
 def get_branch_foods(db: Session = Depends(get_db), current_user: User = Depends(get_canteen_admin_user)):
-    """Менің филиалымның тағамдары"""
+    """Менің филиалымның тағамдары (Кәдімгі + Абонемент)"""
     if not current_user.branch_id:
         raise HTTPException(status_code=400, detail="Сізге филиал тағайындалмаған")
 
+    from app.models.food import Food, MenuType
+    from app.models.branch import Branch
+    from app.models.restaurant import Restaurant as RestaurantModel
+    from app.models.branch_menu import BranchMenu
+    
+    branch = db.query(Branch).filter(Branch.id == current_user.branch_id).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Филиал табылмады")
+        
+    restaurant = db.query(RestaurantModel).filter(RestaurantModel.id == branch.restaurant_id).first()
+
+    # Get all foods applicable to this branch
+    # 1. Regular foods created by the Admin for this Restaurant
+    # 2. Subscription foods created by the Owner of this Restaurant
+    foods = db.query(Food).filter(
+        (Food.restaurant_id == restaurant.id) | 
+        (Food.owner_id == restaurant.owner_id)
+    ).all()
+    
+    # Get the current branch availability settings
+    branch_menus = db.query(BranchMenu).filter(BranchMenu.branch_id == branch.id).all()
+    availability_map = {bm.food_id: bm.is_available for bm in branch_menus}
+    
+    result = []
+    for f in foods:
+        result.append({
+            "id": f.id,
+            "name": f.name,
+            "description": f.description,
+            "price": f.price,
+            "calories": f.calories,
+            "ingredients": f.ingredients,
+            "menu_type": f.menu_type.value,
+            "is_available": availability_map.get(f.id, False) # Default to false if not in BranchMenu
+        })
+        
+    return result
+
+class ToggleFoodRequest(BaseModel):
+    is_available: bool
+
+@router.put("/foods/{food_id}/toggle")
+def toggle_food_availability(
+    food_id: int,
+    data: ToggleFoodRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_canteen_admin_user)
+):
+    """Филиалдағы тағамның бүгінгі қолжетімділігін өзгерту"""
+    if not current_user.branch_id:
+        raise HTTPException(status_code=400, detail="Сізге филиал тағайындалмаған")
+        
     from app.models.food import Food
-    foods = db.query(Food).filter(Food.branch_id == current_user.branch_id).all()
-    return foods
-
-
-@router.post("/foods", response_model=FoodResponse, status_code=201)
-def create_food(
-        food_data: CreateFoodRequest,
-        db: Session = Depends(get_db),
-        current_user: User = Depends(get_canteen_admin_user)
-):
-    """Жаңа тағам қосу (өз филиалыма)"""
-    if not current_user.branch_id:
-        raise HTTPException(status_code=400, detail="Сізге филиал тағайындалмаған")
-
-    # Override branch_id with canteen admin's branch
-    food_dict = food_data.model_dump()
-    food_dict['branch_id'] = current_user.branch_id
-
-    try:
-        logger.info("Creating food: %s", {k: food_dict.get(k) for k in ['name','price','branch_id']})
-        food = FoodService.create_food(db, food_dict)
-        logger.info("Food created id=%s name=%s", food.id, food.name)
-        return food
-    except Exception as e:
-        # Log full exception with stacktrace so Render captures it
-        logger.exception("Error creating food")
-        # Return a concise error to the client
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.put("/foods/{food_id}", response_model=FoodResponse)
-def update_food(
-        food_id: int,
-        food_data: UpdateFoodRequest,
-        db: Session = Depends(get_db),
-        current_user: User = Depends(get_canteen_admin_user)
-):
-    """Тағамды жаңарту"""
-    food = FoodService.update_food(db, food_id, food_data.model_dump(exclude_unset=True))
-    return food
-
-
-@router.delete("/foods/{food_id}")
-def delete_food(
-        food_id: int,
-        db: Session = Depends(get_db),
-        current_user: User = Depends(get_canteen_admin_user)
-):
-    """Тағамды өшіру"""
-    return FoodService.delete_food(db, food_id)
+    from app.models.branch_menu import BranchMenu
+    from app.models.branch import Branch
+    from app.models.restaurant import Restaurant as RestaurantModel
+    
+    food = db.query(Food).filter(Food.id == food_id).first()
+    if not food:
+        raise HTTPException(status_code=404, detail="Тағам табылмады")
+        
+    branch = db.query(Branch).filter(Branch.id == current_user.branch_id).first()
+    restaurant = db.query(RestaurantModel).filter(RestaurantModel.id == branch.restaurant_id).first()
+    
+    # Verify food belongs to this branch's ecosystem
+    if food.restaurant_id != restaurant.id and food.owner_id != restaurant.owner_id:
+        raise HTTPException(status_code=403, detail="Бұл тағам сіздің филиалға тиесілі емес")
+        
+    branch_menu = db.query(BranchMenu).filter(
+        BranchMenu.branch_id == current_user.branch_id,
+        BranchMenu.food_id == food_id
+    ).first()
+    
+    if branch_menu:
+        branch_menu.is_available = data.is_available
+    else:
+        branch_menu = BranchMenu(
+            branch_id=current_user.branch_id,
+            food_id=food_id,
+            is_available=data.is_available
+        )
+        db.add(branch_menu)
+        
+    db.commit()
+    
+    return {"message": "Қолжетімділік жаңартылды", "is_available": data.is_available, "food_id": food_id}
 
 
 class CreateCashierRequest(BaseModel):

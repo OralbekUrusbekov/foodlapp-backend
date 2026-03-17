@@ -1,0 +1,73 @@
+Traceback (most recent call last):
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1938, in _exec_single_context
+    self.dialect.do_executemany(
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\psycopg2.py", line 794, in do_executemany
+    cursor.executemany(statement, parameters)
+psycopg2.errors.NotNullViolation: ОШИБКА:  значение NULL в столбце "branch_id" отношения "orders" нарушает ограничение NOT NULL
+DETAIL:  Ошибочная строка содержит (1, 1, null, 2000, cooking, uEC2o812ZXNwSTXO4-jY_K6-OuAyYcozIfOvEwMBntM, t, 2026-03-12 09:32:43.900419, 2026-03-12 09:17:43.907774, 2026-03-16 22:30:24.000222, t, 11).
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\test_delete_branch.py", line 16, in <module>
+    db.commit()
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 1969, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 1256, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 1231, in _prepare_impl
+    self.session.flush()
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 4312, in flush
+    self._flush(objects)
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 4447, in _flush
+    with util.safe_reraise():
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 146, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 4408, in _flush
+    flush_context.execute()
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 463, in execute
+    n.execute_aggregate(self, set_)
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 567, in execute_aggregate
+    self.execute(uow)
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\orm\persistence.py", line 910, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1416, in execute
+    return meth(
+           ^^^^^
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\sql\elements.py", line 517, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1639, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1848, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1988, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 2344, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1938, in _exec_single_context
+    self.dialect.do_executemany(
+  File "C:\Users\AIBEK\Fullstacks\foodlapp\foodlapp-backend\.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\psycopg2.py", line 794, in do_executemany
+    cursor.executemany(statement, parameters)
+sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) ОШИБКА:  значение NULL в столбце "branch_id" отношения "orders" нарушает ограничение NOT NULL
+DETAIL:  Ошибочная строка содержит (1, 1, null, 2000, cooking, uEC2o812ZXNwSTXO4-jY_K6-OuAyYcozIfOvEwMBntM, t, 2026-03-12 09:32:43.900419, 2026-03-12 09:17:43.907774, 2026-03-16 22:30:24.000222, t, 11).
+
+[SQL: UPDATE orders SET branch_id=%(branch_id)s, updated_at=%(updated_at)s WHERE orders.id = %(orders_id)s]
+[parameters: [{'branch_id': None, 'updated_at': datetime.datetime(2026, 3, 16, 22, 30, 24, 222), 'orders_id': 1}, {'branch_id': None, 'updated_at': datetime.datetime(2026, 3, 16, 22, 30, 24, 222), 'orders_id': 2}, {'branch_id': None, 'updated_at': datetime.datetime(2026, 3, 16, 22, 30, 24, 222), 'orders_id': 3}, {'branch_id': None, 'updated_at': datetime.datetime(2026, 3, 16, 22, 30, 24, 222), 'orders_id': 4}, {'branch_id': None, 'updated_at': datetime.datetime(2026, 3, 16, 22, 30, 24, 222), 'orders_id': 5}]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)

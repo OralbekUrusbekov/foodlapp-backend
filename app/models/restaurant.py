@@ -20,3 +20,4 @@ class Restaurant(Base):
     admin = relationship("User", back_populates="managed_restaurant", foreign_keys=[admin_id])
 
     branches = relationship("Branch", back_populates="restaurant")
+    regular_foods = relationship("Food", back_populates="restaurant", foreign_keys="Food.restaurant_id")

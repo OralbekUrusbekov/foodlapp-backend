@@ -1,0 +1,4 @@
+Active UserSubscription: ID=3, SubID=11, Remaining=20, EndDate=2026-04-14 19:23:41.913304
+Subscription Specs: DailyLimit=1, Time=16:16:12.455000-16:30:12.455000
+Today Used (per OrderService logic): 0
+Order ID=6, CreatedAt=2026-03-16 22:55:33.736536, PaidBySub=False, Status=OrderStatus.PENDING

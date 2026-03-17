@@ -1,0 +1,10 @@
+--- Foods Table Columns ---
+Name: id, Type: INTEGER
+Name: name, Type: VARCHAR
+Name: description, Type: TEXT
+Name: price, Type: DOUBLE PRECISION
+Name: calories, Type: INTEGER
+Name: ingredients, Type: TEXT
+Name: menu_type, Type: VARCHAR(12)
+Name: owner_id, Type: INTEGER
+Name: restaurant_id, Type: INTEGER

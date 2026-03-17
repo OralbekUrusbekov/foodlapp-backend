@@ -20,7 +20,7 @@ class Branch(Base):
     restaurant = relationship("Restaurant", back_populates="branches")
     staff = relationship("User", back_populates="managed_branch", foreign_keys=[staff_id])
 
-    foods = relationship("Food", back_populates="branch")
-    orders = relationship("Order", back_populates="branch")
+    branch_menus = relationship("BranchMenu", back_populates="branch", cascade="all, delete")
+    orders = relationship("Order", back_populates="branch", cascade="all, delete")
 
     users = relationship("User", back_populates="branch", foreign_keys="[User.branch_id]")

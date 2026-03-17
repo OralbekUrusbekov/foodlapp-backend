@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, canteen_admin, cashier, client, notification, owner, websocket, admin
+from app.api import auth, canteen_admin, cashier, client, notification, owner, websocket, admin, ai
 import logging
 from alembic.config import Config
 from alembic import command
@@ -27,6 +27,7 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(canteen_admin.router, prefix="/api/canteen-admin", tags=["Canteen Admin"])
 app.include_router(cashier.router, prefix="/api/cashier", tags=["Cashier"])
 app.include_router(client.router, prefix="/api/client", tags=["Client"])
+app.include_router(ai.router, prefix="/api/ai", tags=["AI Ration"])
 app.include_router(websocket.router, prefix="/api/ws", tags=["WebSocket"])
 app.include_router(notification.router, prefix="/api/notifications", tags=["Notifications"])
 

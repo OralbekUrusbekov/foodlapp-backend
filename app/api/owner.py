@@ -1,15 +1,20 @@
-from datetime import time
+from datetime import time, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, logger
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from pydantic import BaseModel
 
 from app.models import Order
+from app.models.branch import Branch
+from app.models.subscription import Subscription, SubscriptionMenu
 from app.database.connection import get_db
 from app.configuration.security.dependencies import get_owner_user
 from app.models.user import User, UserRole
 from app.service.restaurant_service import RestaurantService
 from app.service.auth_service import AuthService
 from app.schemas.restaurant_dto import RestaurantCreate, RestaurantUpdate, AdminAssign
+from app.models.food import Food, MenuType
 
 router = APIRouter()
 
@@ -230,8 +235,6 @@ def get_logs(
 
 
 
-from app.models.subscription import Subscription
-from pydantic import BaseModel
 
 
 class SubscriptionCreate(BaseModel):
@@ -340,6 +343,239 @@ def subscription_usage_stats(
     return result
 
 
+@router.get("/subscriptions/{sub_id}/menu")
+def get_subscription_menu(
+    sub_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонементке бекітілген тағамдарды алу"""
+    sub = db.query(Subscription).filter(Subscription.id == sub_id).first()
+    if not sub:
+        raise HTTPException(404, "Абонемент табылмады")
+
+    from sqlalchemy.orm import joinedload
+    menu_items = db.query(SubscriptionMenu).filter(
+        SubscriptionMenu.subscription_id == sub_id
+    ).options(joinedload(SubscriptionMenu.food)).all()
+    
+    return [
+        {
+            "id": item.food.id,
+            "name": item.food.name,
+            "description": item.food.description,
+            "price": item.food.price,
+            "menu_type": item.food.menu_type.value if hasattr(item.food.menu_type, "value") else item.food.menu_type
+        }
+        for item in menu_items
+        if item.food
+    ]
+
+
+class AddMenuItemRequest(BaseModel):
+    food_id: int
+
+
+@router.post("/subscriptions/{sub_id}/menu")
+def add_food_to_subscription_menu(
+    sub_id: int,
+    data: AddMenuItemRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонемент мәзіріне тағам қосу"""
+    sub = db.query(Subscription).filter(Subscription.id == sub_id).first()
+    if not sub:
+        raise HTTPException(404, "Абонемент табылмады")
+        
+    from app.models.food import Food, MenuType
+    from app.models.restaurant import Restaurant as RestaurantModel
+    
+    food = db.query(Food).filter(Food.id == data.food_id).first()
+    if not food:
+        raise HTTPException(404, "Тағам табылмады")
+        
+    if food.menu_type == MenuType.SUBSCRIPTION and food.owner_id != current_user.id:
+        raise HTTPException(403, "Өзге ресторанның тағамын қосуға болмайды")
+    elif food.menu_type == MenuType.REGULAR:
+        rest = db.query(RestaurantModel).filter(RestaurantModel.id == food.restaurant_id).first()
+        if rest and rest.owner_id != current_user.id:
+            raise HTTPException(403, "Өзге ресторанның тағамын қосуға болмайды")
+
+    exists = db.query(SubscriptionMenu).filter(
+        SubscriptionMenu.subscription_id == sub_id,
+        SubscriptionMenu.food_id == data.food_id
+    ).first()
+    
+    if exists:
+        raise HTTPException(400, "Тағам абонементте бар")
+        
+    new_item = SubscriptionMenu(subscription_id=sub_id, food_id=data.food_id)
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    return {"message": "Тағам қосылды"}
+
+
+@router.delete("/subscriptions/{sub_id}/menu/{food_id}")
+def remove_food_from_subscription_menu(
+    sub_id: int,
+    food_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонемент мәзірінен тағамды өшіру"""
+    item = db.query(SubscriptionMenu).filter(
+        SubscriptionMenu.subscription_id == sub_id,
+        SubscriptionMenu.food_id == food_id
+    ).first()
+    
+    if not item:
+        raise HTTPException(404, "Мәзірде мұндай тағам жоқ")
+        
+    db.delete(item)
+    db.commit()
+    return {"message": "Тағам өшірілді"}
+
+
+@router.get("/foods")
+def get_owner_foods(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Owner-дің барлық абонемент тағамдарын алу"""
+    print(f"Fetching owner foods for user_id: {current_user.id}")
+    
+    try:
+        foods = db.query(Food).filter(
+            Food.owner_id == current_user.id,
+            Food.menu_type == MenuType.SUBSCRIPTION
+        ).all()
+        
+        print(f"Found {len(foods)} owner foods")
+        
+        result = []
+        for f in foods:
+            m_type = f.menu_type.value if hasattr(f.menu_type, "value") else f.menu_type
+            result.append({
+                "id": f.id,
+                "name": f.name,
+                "description": f.description,
+                "price": f.price,
+                "calories": f.calories,
+                "ingredients": f.ingredients,
+                "menu_type": m_type
+            })
+        
+        print(f"Successfully serialized {len(result)} foods")
+        return result
+    except Exception as e:
+        print(f"Error in get_owner_foods: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Тағамдарды алу қатесі: {str(e)}")
+
+class CreateSubscriptionFoodRequest(BaseModel):
+    name: str
+    description: str | None = None
+    price: float
+    calories: int | None = None
+    ingredients: str | None = None
+
+@router.post("/foods", status_code=201)
+def create_subscription_food(
+    food_data: CreateSubscriptionFoodRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонементке арналған жаңа тағам қосу (Глобалды)"""
+    from app.models.food import Food, MenuType
+    
+    food = Food(
+        name=food_data.name,
+        description=food_data.description,
+        price=food_data.price,
+        calories=food_data.calories,
+        ingredients=food_data.ingredients,
+        menu_type=MenuType.SUBSCRIPTION,
+        owner_id=current_user.id
+    )
+    db.add(food)
+    db.commit()
+    db.refresh(food)
+    
+    return {
+        "id": food.id,
+        "name": food.name,
+        "description": food.description,
+        "price": food.price,
+        "calories": food.calories,
+        "ingredients": food.ingredients,
+        "menu_type": food.menu_type.value
+    }
+
+class UpdateSubscriptionFoodRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    price: float | None = None
+    calories: int | None = None
+    ingredients: str | None = None
+
+@router.put("/foods/{food_id}")
+def update_subscription_food(
+    food_id: int,
+    food_data: UpdateSubscriptionFoodRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонемент тағамын жаңарту"""
+    from app.models.food import Food, MenuType
+    food = db.query(Food).filter(
+        Food.id == food_id,
+        Food.owner_id == current_user.id,
+        Food.menu_type == MenuType.SUBSCRIPTION
+    ).first()
+    
+    if not food:
+        raise HTTPException(404, "Тағам табылмады немесе сізге тиесілі емес")
+        
+    for k, v in food_data.model_dump(exclude_unset=True).items():
+        setattr(food, k, v)
+        
+    db.commit()
+    db.refresh(food)
+    
+    return {
+        "id": food.id,
+        "name": food.name,
+        "description": food.description,
+        "price": food.price,
+        "calories": food.calories,
+        "ingredients": food.ingredients,
+        "menu_type": food.menu_type.value
+    }
+
+@router.delete("/foods/{food_id}")
+def delete_subscription_food(
+    food_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонемент тағамын өшіру"""
+    from app.models.food import Food, MenuType
+    food = db.query(Food).filter(
+        Food.id == food_id,
+        Food.owner_id == current_user.id,
+        Food.menu_type == MenuType.SUBSCRIPTION
+    ).first()
+    
+    if not food:
+        raise HTTPException(404, "Тағам табылмады немесе сізге тиесілі емес")
+        
+    db.delete(food)
+    db.commit()
+    return {"message": "Тағам өшірілді"}
+
 
 @router.delete("/subscriptions/{sub_id}")
 def delete_subscription(
@@ -347,56 +583,335 @@ def delete_subscription(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_owner_user)
 ):
+    """Абонементті өшіру (деактивация)"""
     sub = db.query(Subscription).filter(Subscription.id == sub_id).first()
     if not sub:
-        raise HTTPException(404)
+        raise HTTPException(404, "Абонемент табылмады")
 
     sub.is_active = False
     db.commit()
-    return {"message": "Subscription disabled"}
+    return {"message": "Абонемент деактивацияланды"}
 
-@router.get("/analytics/subscriptions")
-def subscription_analytics(
+
+# --------------------------
+# 📊 SUBSCRIPTION STATS (Owner-only, cross-restaurant)
+# Stats aggregate across ALL owner's restaurants by default.
+# Pass ?restaurant_id=N to filter to a specific one.
+# --------------------------
+from datetime import date as date_type
+from app.models.restaurant import Restaurant as RestaurantModel
+
+
+def _get_owner_branch_ids(db: Session, owner_id: int, restaurant_id: int | None = None) -> list[int]:
+    """Owner-ға тиесілі барлық филиал ID-лерін алу."""
+    q = db.query(Branch.id).join(RestaurantModel, RestaurantModel.id == Branch.restaurant_id)
+    q = q.filter(RestaurantModel.owner_id == owner_id)
+    if restaurant_id:
+        # Ownership check
+        restaurant = db.query(RestaurantModel).filter(
+            RestaurantModel.id == restaurant_id,
+            RestaurantModel.owner_id == owner_id
+        ).first()
+        if not restaurant:
+            raise HTTPException(403, "Бұл ресторан сізге тиесілі емес")
+        q = q.filter(Branch.restaurant_id == restaurant_id)
+    return [b[0] for b in q.all()]
+
+
+@router.get("/stats/subscription/overview")
+def get_subscription_overview(
+    restaurant_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_owner_user)
 ):
-    from sqlalchemy import func
-    from app.models.order import Order
-    from app.models.subscription import Subscription
-    from app.models.branch import Branch
+    """Абонементтер бойынша жалпы статистика (барлық ресторандар немесе бір ресторан)"""
+    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
 
-    rows = (
+    active_subscriptions = db.query(Subscription).filter(Subscription.is_active == True).count()
+
+    today = datetime.utcnow().date()
+    today_usage = (
+        db.query(func.count(func.distinct(Order.id)))
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            Order.paid_by_subscription == True,
+            Order.subscription_id.isnot(None),
+            func.date(Order.created_at) == today,
+        )
+        .scalar()
+    ) or 0
+
+    total_subscription_orders = (
+        db.query(func.count(func.distinct(Order.id)))
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            Order.paid_by_subscription == True,
+            Order.subscription_id.isnot(None),
+        )
+        .scalar()
+    ) or 0
+
+    return {
+        "active_subscriptions": active_subscriptions,
+        "today_usage": today_usage,
+        "total_subscription_orders": total_subscription_orders,
+        "branches_included": len(branch_ids),
+    }
+
+
+@router.get("/stats/subscription/daily")
+def get_daily_subscription_stats(
+    days: int = 7,
+    restaurant_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Күнделікті абонемент қолдану статистикасы"""
+    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+
+    end_date = datetime.utcnow().date()
+    start_date = end_date - timedelta(days=days)
+
+    daily_stats = (
         db.query(
-            Branch.name,
+            func.date(Order.created_at).label("date"),
+            func.count(func.distinct(Order.id)).label("total_orders"),
+            func.count(func.distinct(Order.user_id)).label("total_customers"),
+        )
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            Order.paid_by_subscription == True,
+            Order.subscription_id.isnot(None),
+            func.date(Order.created_at) >= start_date,
+            func.date(Order.created_at) <= end_date,
+        )
+        .group_by(func.date(Order.created_at))
+        .order_by(func.date(Order.created_at).desc())
+        .all()
+    )
+
+    return [
+        {
+            "date": stat.date.isoformat(),
+            "total_orders": stat.total_orders,
+            "total_customers": stat.total_customers
+        }
+        for stat in daily_stats
+    ]
+
+
+@router.get("/stats/subscription/by-branch")
+def get_subscription_stats_by_branch(
+    restaurant_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Филиалдар бойынша абонемент статистикасы"""
+    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+    branches = db.query(Branch).filter(Branch.id.in_(branch_ids)).all()
+
+    result = []
+    for branch in branches:
+        orders = (
+            db.query(Order)
+            .filter(
+                Order.branch_id == branch.id,
+                Order.paid_by_subscription == True,
+                Order.subscription_id.isnot(None),
+            )
+            .all()
+        )
+
+        top_subscription = (
+            db.query(
+                Subscription.name,
+                func.count(func.distinct(Order.id)).label("count"),
+            )
+            .join(Order, Order.subscription_id == Subscription.id)
+            .filter(
+                Order.branch_id == branch.id,
+                Order.paid_by_subscription == True,
+            )
+            .group_by(Subscription.name)
+            .order_by(func.count(func.distinct(Order.id)).desc())
+            .first()
+        )
+
+        result.append({
+            "branch_id": branch.id,
+            "branch_name": branch.name,
+            "total_orders": len(orders),
+            "total_customers": len(set(o.user_id for o in orders)),
+            "top_subscription": top_subscription[0] if top_subscription else None,
+            "top_subscription_count": top_subscription[1] if top_subscription else 0
+        })
+
+    return result
+
+
+@router.get("/stats/subscription/by-subscription")
+def get_subscription_stats_by_type(
+    restaurant_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонемент түрлері бойынша статистика"""
+    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+
+    stats = (
+        db.query(
+            Subscription.id,
             Subscription.name,
-            func.count(Order.id)
+            Subscription.price,
+            Subscription.duration_days,
+            Subscription.meal_limit,
+            func.count(func.distinct(Order.id)).label("total_orders"),
+            func.count(func.distinct(Order.user_id)).label("total_users"),
+        )
+        .join(Order, Order.subscription_id == Subscription.id)
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            Order.paid_by_subscription == True,
+        )
+        .group_by(
+            Subscription.id,
+            Subscription.name,
+            Subscription.price,
+            Subscription.duration_days,
+            Subscription.meal_limit,
+        )
+        .order_by(func.count(func.distinct(Order.id)).desc())
+        .all()
+    )
+
+    return [
+        {
+            "subscription_id": stat.id,
+            "subscription_name": stat.name,
+            "price": stat.price,
+            "duration_days": stat.duration_days,
+            "meal_limit": stat.meal_limit,
+            "total_orders": stat.total_orders,
+            "total_users": stat.total_users
+        }
+        for stat in stats
+    ]
+
+
+class DateRangeRequest(BaseModel):
+    start_date: date_type
+    end_date: date_type
+    branch_id: int | None = None
+    subscription_id: int | None = None
+    restaurant_id: int | None = None
+
+
+@router.post("/stats/subscription/custom-range")
+def get_subscription_stats_custom_range(
+    request: DateRangeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Кез келген кезеңдегі абонемент статистикасы"""
+    branch_ids = _get_owner_branch_ids(db, current_user.id, request.restaurant_id)
+
+    query = (
+        db.query(
+            Branch.id.label("branch_id"),
+            Branch.name.label("branch_name"),
+            Subscription.id.label("subscription_id"),
+            Subscription.name.label("subscription_name"),
+            func.count(func.distinct(Order.id)).label("total_orders"),
+            func.count(func.distinct(Order.user_id)).label("total_customers"),
         )
         .join(Order, Order.branch_id == Branch.id)
         .join(Subscription, Subscription.id == Order.subscription_id)
-        .filter(Order.paid_by_subscription == True)
-        .group_by(Branch.name, Subscription.name)
-        .all()
-    )
-
-    return rows
-
-@router.get("/analytics/top-subscriptions")
-def top_subs(db: Session = Depends(get_db)):
-    from sqlalchemy import func
-
-    rows = (
-        db.query(
-            Subscription.name,
-            func.count(Order.id)
+        .filter(
+            Branch.id.in_(branch_ids),
+            Order.paid_by_subscription == True,
+            func.date(Order.created_at) >= request.start_date,
+            func.date(Order.created_at) <= request.end_date,
         )
-        .join(Order)
-        .group_by(Subscription.name)
-        .order_by(func.count(Order.id).desc())
+    )
+
+    if request.branch_id:
+        query = query.filter(Branch.id == request.branch_id)
+    if request.subscription_id:
+        query = query.filter(Subscription.id == request.subscription_id)
+
+    query = query.group_by(
+        Branch.id, Branch.name, Subscription.id, Subscription.name
+    ).order_by(func.count(Order.id).desc())
+
+    results = query.all()
+
+    return [
+        {
+            "branch_id": r.branch_id,
+            "branch_name": r.branch_name,
+            "subscription_id": r.subscription_id,
+            "subscription_name": r.subscription_name,
+            "total_orders": r.total_orders,
+            "total_customers": r.total_customers
+        }
+        for r in results
+    ]
+
+
+@router.get("/stats/subscription/export")
+def export_subscription_stats(
+    restaurant_id: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Абонемент статистикасын экспорттау (CSV)"""
+    import csv
+    from io import StringIO
+
+    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+
+    if not start_date:
+        start_date = (datetime.utcnow() - timedelta(days=30)).date().isoformat()
+    if not end_date:
+        end_date = datetime.utcnow().date().isoformat()
+
+    stats = (
+        db.query(
+            func.date(Order.created_at).label("date"),
+            Branch.name.label("branch_name"),
+            Subscription.name.label("subscription_name"),
+            User.full_name.label("user_name"),
+            Order.total_price,
+        )
+        .join(Branch, Branch.id == Order.branch_id)
+        .join(Subscription, Subscription.id == Order.subscription_id)
+        .join(User, User.id == Order.user_id)
+        .filter(
+            Order.branch_id.in_(branch_ids),
+            Order.paid_by_subscription == True,
+            func.date(Order.created_at) >= start_date,
+            func.date(Order.created_at) <= end_date,
+        )
+        .order_by(Order.created_at.desc())
         .all()
     )
 
-    return rows
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Күні', 'Филиал', 'Абонемент', 'Клиент', 'Заказ сомасы'])
+    for stat in stats:
+        writer.writerow([
+            stat.date,
+            stat.branch_name,
+            stat.subscription_name,
+            stat.user_name,
+            stat.total_price,
+        ])
 
-
-
-
+    return {
+        "csv_data": output.getvalue(),
+        "filename": f"subscription_stats_{start_date}_{end_date}.csv",
+        "count": len(stats)
+    }

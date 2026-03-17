@@ -47,12 +47,95 @@ def get_branch(branch_id: int, db: Session = Depends(get_db), current_user: User
     return branch
 
 
-# Тағамдар
-@router.get("/foods/{branch_id}", response_model=List[FoodResponse])
+@router.get("/foods/{branch_id}")
 def get_foods(branch_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
-    """Филиал бойынша тағамдарды көру"""
-    foods = FoodService.get_foods_by_branch(db, branch_id)
-    return foods
+    """Филиал бойынша қолжетімді тағамдарды алу"""
+    from app.models.food import Food, MenuType
+    from app.models.branch_menu import BranchMenu
+    from app.models.branch import Branch
+    from app.models.restaurant import Restaurant as RestaurantModel
+    from app.models.subscription import SubscriptionMenu
+    from app.models.order import Order
+    from datetime import datetime
+
+    branch = db.query(Branch).filter(Branch.id == branch_id, Branch.is_active == True).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Филиал табылмады немесе белсенді емес")
+        
+    restaurant = db.query(RestaurantModel).filter(RestaurantModel.id == branch.restaurant_id).first()
+
+    user_sub = SubscriptionService.get_user_subscription(db, current_user.id)
+    can_order_sub = False
+    allowed_sub_food_ids = []
+    
+    if user_sub:
+        now = datetime.now() # Use local time for business window checks
+        now_utc = datetime.utcnow()
+        sub = user_sub.subscription
+        
+        can_order_sub = True
+        
+        # 1. Total usage limit check
+        if user_sub.remaining_meals is not None and user_sub.remaining_meals <= 0:
+            can_order_sub = False
+        
+        # 2. Daily limit check
+        if can_order_sub and getattr(sub, "daily_limit", None):
+            today_start_utc = datetime(now_utc.year, now_utc.month, now_utc.day)
+            today_used = db.query(Order).filter(
+                Order.user_id == current_user.id,
+                Order.subscription_id == sub.id,
+                Order.created_at >= today_start_utc,
+                Order.paid_by_subscription == True
+            ).count()
+            if today_used >= sub.daily_limit:
+                can_order_sub = False
+
+        # 3. Time window check
+        if can_order_sub and getattr(sub, "allowed_from", None) and getattr(sub, "allowed_to", None):
+            current_time = now.time()
+            if not (sub.allowed_from <= current_time <= sub.allowed_to):
+                can_order_sub = False
+
+        # ALWAYS get allowed foods if they have a sub
+        subs = db.query(SubscriptionMenu.food_id).filter(
+            SubscriptionMenu.subscription_id == user_sub.subscription_id
+        ).all()
+        allowed_sub_food_ids = [s[0] for s in subs]
+
+    # Base query for foods available at this branch
+    query = db.query(Food).join(
+        BranchMenu, BranchMenu.food_id == Food.id
+    ).filter(
+        BranchMenu.branch_id == branch_id,
+        BranchMenu.is_available == True,
+        ((Food.restaurant_id == restaurant.id) | (Food.owner_id == restaurant.owner_id))
+    )
+    
+    if user_sub:
+        query = query.filter(
+            (Food.menu_type == MenuType.REGULAR) | 
+            (Food.id.in_(allowed_sub_food_ids))
+        )
+    else:
+        query = query.filter(Food.menu_type == MenuType.REGULAR)
+        
+    foods = query.all()
+    
+    return [
+        {
+            "id": f.id,
+            "name": f.name,
+            "description": f.description,
+            "price": f.price,
+            "calories": f.calories,
+            "ingredients": f.ingredients,
+            "image_url": f.images[0].url if f.images and len(f.images) > 0 else None,
+            "menu_type": f.menu_type.value if hasattr(f.menu_type, 'value') else f.menu_type,
+            "can_order_sub": can_order_sub if f.id in allowed_sub_food_ids else True # for regular foods it is always orderable via money
+        }
+        for f in foods
+    ]
 
 # Абонементтер
 @router.get("/subscriptions", response_model=List[SubscriptionResponse])
@@ -83,6 +166,11 @@ def get_my_subscription(db: Session = Depends(get_db), current_user: User = Depe
     if not subscription:
         raise HTTPException(status_code=404, detail="Белсенді абонемент жоқ")
     return subscription
+
+@router.post("/subscriptions/cancel")
+def cancel_my_subscription(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    """Белсенді абонементті тоқтату"""
+    return SubscriptionService.cancel_subscription(db, current_user.id)
 
 # Заказдар
 @router.post("/orders", status_code=201)
@@ -153,19 +241,85 @@ def scan_order_qr(qr_code: str, db: Session = Depends(get_db), current_user: Use
 @router.get("/menu/today")
 def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Бүгінгі мәзірді көру"""
-    from datetime import datetime
     from app.models.food import Food
+    from app.models.branch_menu import BranchMenu
+    from app.service.subscription_service import SubscriptionService
+    from app.models.subscription import SubscriptionMenu
+    from app.models.order import Order
+    from datetime import datetime
     
-    # Бүгінгі күн үшін тағамдарды алу (күнделгі бойынша)
-    today = datetime.now().date()
-    day_of_week = today.weekday()  # 0=Monday, 6=Sunday
+    # Кездейсоқ немесе кез-келген қолжетімді 8 тағамды алу (Басты бет үшін көрсетілім)
+    available_branch_menus = db.query(BranchMenu).filter(BranchMenu.is_available == True).limit(50).all()
     
-    # Қарапайым: дүйсенбі=0, дүйсенбі=1, ... жексенбі=6
-    # Демалыс күндері де тағамдар көрсетеміз (тест үшін)
+    if not available_branch_menus:
+        return []
+        
+    user_sub = SubscriptionService.get_user_subscription(db, current_user.id)
+    allowed_sub_food_ids = []
+    can_order_sub = False
     
-    # Жұмыс күндері үшін тағамдарды кездейсоқ таңдау
-    foods = db.query(Food).filter(
-        Food.is_available == True
-    ).limit(8).all()  # Max 8 items for today's menu
+    if user_sub:
+        now = datetime.now()
+        now_utc = datetime.utcnow()
+        sub = user_sub.subscription
+        
+        can_order_sub = True
+        
+        # 1. Total usage limit check
+        if user_sub.remaining_meals is not None and user_sub.remaining_meals <= 0:
+            can_order_sub = False
+        
+        # 2. Daily limit check
+        if can_order_sub and getattr(sub, "daily_limit", None):
+            today_start_utc = datetime(now_utc.year, now_utc.month, now_utc.day)
+            today_used = db.query(Order).filter(
+                Order.user_id == current_user.id,
+                Order.subscription_id == sub.id,
+                Order.created_at >= today_start_utc,
+                Order.paid_by_subscription == True
+            ).count()
+            if today_used >= sub.daily_limit:
+                can_order_sub = False
+
+        # 3. Time window check
+        if can_order_sub and getattr(sub, "allowed_from", None) and getattr(sub, "allowed_to", None):
+            current_time = now.time()
+            if not (sub.allowed_from <= current_time <= sub.allowed_to):
+                can_order_sub = False
+
+        # ALWAYS get allowed foods if they have a sub
+        subs = db.query(SubscriptionMenu.food_id).filter(
+            SubscriptionMenu.subscription_id == user_sub.subscription_id
+        ).all()
+        allowed_sub_food_ids = [s[0] for s in subs]
+        
+    result = []
+    seen_food_ids = set()
     
-    return foods
+    for bm in available_branch_menus:
+        if len(result) >= 8:
+            break
+        if bm.food_id not in seen_food_ids:
+            food = db.query(Food).filter(Food.id == bm.food_id).first()
+            if food:
+                m_type = food.menu_type.value if hasattr(food.menu_type, 'value') else food.menu_type
+                
+                # Subscription тағамдарды тек рұқсат болса ғана қосамыз
+                if m_type == "SUBSCRIPTION":
+                    # Decoupled visibility from can_order_sub
+                    if not user_sub or food.id not in allowed_sub_food_ids:
+                        continue
+                    
+                result.append({
+                    "id": food.id,
+                    "name": food.name,
+                    "description": food.description,
+                    "price": food.price,
+                    "image_url": food.images[0].url if food.images and len(food.images) > 0 else None,
+                    "menu_type": m_type,
+                    "branch_id": bm.branch_id,
+                    "can_order_sub": can_order_sub if m_type == "SUBSCRIPTION" else True
+                })
+                seen_food_ids.add(food.id)
+                
+    return result

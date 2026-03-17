@@ -64,3 +64,9 @@ class User(Base):
     orders = relationship("Order", back_populates="user")
     subscriptions = relationship("UserSubscription", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
+    
+    created_foods = relationship(
+        "Food",
+        back_populates="owner",
+        foreign_keys="Food.owner_id"
+    )

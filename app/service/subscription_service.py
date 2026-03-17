@@ -34,7 +34,7 @@ class SubscriptionService:
                 detail="Қолданушы табылмады"
             )
         
-        # Белсенді абонементті тексеру
+        # Белсенді абонементті тексеру - Егер бар болса, тағы біреуін алуға рұқсат бермейміз
         active_sub = db.query(UserSubscription).filter(
             UserSubscription.user_id == user_id,
             UserSubscription.is_active == True,
@@ -42,8 +42,10 @@ class SubscriptionService:
         ).first()
         
         if active_sub:
-            # Ескі абонементті өшіру
-            active_sub.is_active = False
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Сізде белсенді абонемент бар. Жаңасын алу үшін алдымен қазіргі абонементті тоқтатыңыз."
+            )
         
         # Жаңа абонемент жасау
         start_date = datetime.utcnow()
@@ -63,6 +65,25 @@ class SubscriptionService:
         db.refresh(new_subscription)
         return new_subscription
     
+    @staticmethod
+    def cancel_subscription(db: Session, user_id: int):
+        """Қолданушының белсенді абонементін тоқтату"""
+        active_sub = db.query(UserSubscription).filter(
+            UserSubscription.user_id == user_id,
+            UserSubscription.is_active == True,
+            UserSubscription.end_date > datetime.utcnow()
+        ).first()
+        
+        if not active_sub:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Белсенді абонемент табылмады"
+            )
+        
+        active_sub.is_active = False
+        db.commit()
+        return {"message": "Абонемент тоқтатылды"}
+
     @staticmethod
     def get_user_subscription(db: Session, user_id: int):
         """Қолданушының белсенді абонементін алу"""

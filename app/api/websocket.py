@@ -138,7 +138,7 @@ async def handle_websocket_message(websocket: WebSocket, message: dict, user: Us
             return
             
         # Validate status
-        valid_statuses = ['pending', 'accepted', 'completed', 'cancelled']
+        valid_statuses = ['pending', 'accepted', 'cooking', 'ready', 'given', 'cancelled']
         if new_status not in valid_statuses:
             logger.error(f"Жарамсыз статус: {new_status}")
             await websocket_manager.send_personal_message({
@@ -176,27 +176,42 @@ async def handle_websocket_message(websocket: WebSocket, message: dict, user: Us
         # Белсенді заказдарды алу
         try:
             from app.models.order import Order
+            from app.models.user import User
             from sqlalchemy import and_
             
-            # Пайдаланушының филиалына қарай заказдарды алу
+            # Message data-дан branch_id алу мүмкіндігі
+            msg_data = message.get("data", {})
+            branch_id = msg_data.get("branch_id")
+            
+            # Егер хабарламада жоқ болса, пайдаланушы профилінен алу
+            if not branch_id and user and hasattr(user, 'branch_id') and user.branch_id:
+                branch_id = user.branch_id
+            
+            # Белсенді заказдарды алу (күтілуде, қабылданды, дайындалуда, дайын)
             query = db.query(Order).filter(
-                Order.status.in_(["pending", "accepted"])
+                Order.status.in_(["pending", "accepted", "cooking", "ready"])
             )
             
-            if user and hasattr(user, 'branch_id') and user.branch_id:
-                query = query.filter(Order.branch_id == user.branch_id)
+            if branch_id:
+                query = query.filter(Order.branch_id == branch_id)
             
-            orders = query.all()
+            # Уақыты бойынша сұрыптау (ең ескісі бірінші - кезек реті бойынша)
+            orders = query.order_by(Order.created_at.asc()).all()
             
             orders_data = []
             for order in orders:
+                # Пайдаланушы атын алу (опционалды)
+                user_obj = db.query(User).filter(User.id == order.user_id).first()
+                user_name = user_obj.full_name if user_obj else "Клиент"
+                
                 orders_data.append({
                     "id": order.id,
                     "status": order.status,
                     "total_price": order.total_price,
                     "branch_id": order.branch_id,
                     "created_at": order.created_at.isoformat(),
-                    "user_id": order.user_id
+                    "user_id": order.user_id,
+                    "user_name": user_name
                 })
             
             await websocket_manager.send_personal_message({
