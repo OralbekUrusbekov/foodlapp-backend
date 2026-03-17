@@ -12,17 +12,21 @@ from config import settings
 from app.configuration.auth_generate_google import generate_google_auth
 from app.configuration.state_storage import state_storage
 from app.database.connection import get_db
+from app.models.user import User
+from app.models.otp_code import OtpCode
 from app.schemas.auth_dto import (
     UserRegisterRequest, 
     UserLoginRequest, 
     UserUpdateRequest,
     TokenResponse, 
-    UserResponse
+    UserResponse,
+    SendOtpRequest,
+    VerifyOtpRequest
 )
-
+from app.service.mail_service import MailService
 from app.service.auth_service import AuthService
 from app.configuration.security.dependencies import get_current_active_user
-from app.models.user import User
+from datetime import datetime, timedelta
 
 router = APIRouter()
 
@@ -101,9 +105,66 @@ async def google_auth_callback(
         "refresh_token": refresh_token,
     }
 
+@router.post("/send-otp")
+async def send_otp(data: SendOtpRequest, db: Session = Depends(get_db)):
+    # 1. Генерация OTP
+    otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
+    
+    # 2. Сақтау
+    db_otp = OtpCode(
+        email=data.email,
+        code=otp_code,
+        expires_at=datetime.utcnow() + timedelta(minutes=10)
+    )
+    db.add(db_otp)
+    db.commit()
+    
+    # 3. Жіберу
+    try:
+        MailService.send_otp_email(data.email, otp_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Email жіберу қатесі: {str(e)}")
+        
+    return {"message": "OTP коды жіберілді"}
+
+@router.post("/verify-otp")
+async def verify_otp(data: VerifyOtpRequest, db: Session = Depends(get_db)):
+    otp = db.query(OtpCode).filter(
+        OtpCode.email == data.email,
+        OtpCode.code == data.code
+    ).order_by(OtpCode.created_at.desc()).first()
+    
+    if not otp or otp.is_expired():
+        raise HTTPException(status_code=400, detail="Код қате немесе мерзімі өткен")
+    
+    # OTP-ны расталды деп белгілейміз (немесе өшіреміз)
+    # Қазірше өшіре салсақ та болады, бірақ register-де тексеру үшін керек
+    # Сондықтан жаңа өріс қосайық немесе User-ді алдын-ала жасайық
+    
+    user = db.query(User).filter(User.email == data.email).first()
+    if user:
+        user.is_email_verified = True
+    else:
+        # User жоқ болса, бұл жаңа тіркелу. 
+        # Register кезінде қалай тексереміз? 
+        # OTP кестесінде verified=True қылып қалдырайық.
+        otp.code = "VERIFIED" # арнайы белгі
+    
+    db.commit()
+    return {"message": "Email сәтті расталды", "verified": True}
+
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(user_data: UserRegisterRequest, db: Session = Depends(get_db)):
+    # Email расталғанын тексеру
+    otp = db.query(OtpCode).filter(
+        OtpCode.email == user_data.email,
+        OtpCode.code == "VERIFIED"
+    ).first()
+    
+    if not otp:
+        raise HTTPException(status_code=400, detail="Email расталмаған. Кодты тексеріңіз.")
+
     try:
         user = AuthService.register_user(
             db=db,
@@ -111,6 +172,10 @@ def register(user_data: UserRegisterRequest, db: Session = Depends(get_db)):
             email=user_data.email,
             password=user_data.password
         )
+        # Тіркелгеннен кейін OTP-ны өшіреміз
+        db.delete(otp)
+        user.is_email_verified = True
+        db.commit()
     except HTTPException as e:
         raise e
     except Exception as e:

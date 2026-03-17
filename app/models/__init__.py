@@ -15,6 +15,8 @@ from .branch_revenue import BranchRevenue
 from .ai_profile import AIProfile
 from .weight_history import WeightHistory
 from .ration import Ration
+from .otp_code import OtpCode
+
 
 __all__ = [
     "Base",
@@ -34,5 +36,7 @@ __all__ = [
     "BranchRevenue",
     "AIProfile",
     "WeightHistory",
-    "Ration"
+    "Ration",
+    "OtpCode"
 ]
+

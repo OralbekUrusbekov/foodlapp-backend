@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import os
@@ -22,6 +23,12 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET_NAME:str = "free - cloud"
     AWS_S3_REGION_NAME:str = "us - east - 1"
     AWS_S3_ENDPOINT_URL:str = "https: // object.pscloud.io"
+
+    # Mail Settings (Optional)
+    MAIL_USERNAME: Optional[str] = None
+    MAIL_PASSWORD: Optional[str] = None
+    MAIL_SERVER: str = "smtp.gmail.com"
+    MAIL_PORT: int = 587
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

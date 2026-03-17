@@ -29,6 +29,7 @@ class User(Base):
         nullable=False,
     )
     is_active = Column(Boolean, default=True)
+    is_email_verified = Column(Boolean, default=False)
 
     # Profile fields
     avatar_url = Column(String, nullable=True)

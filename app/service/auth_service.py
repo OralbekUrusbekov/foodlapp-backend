@@ -72,6 +72,8 @@ class AuthService:
                 detail="Бұл email тіркелген"
             )
         
+        # OTP тексеруін жасаймыз (optional: verify_otp-дан кейін ғана осы жерге келеді)
+        
 
         
         # Жаңа қолданушы жасау
