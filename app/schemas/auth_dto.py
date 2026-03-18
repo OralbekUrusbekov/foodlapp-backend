@@ -28,7 +28,7 @@ class UserResponse(BaseModel):
     email: str
     role: str
     is_active: bool
-    is_email_verified: bool
+    is_email_verified: Optional[bool] = False
     avatar_url: Optional[str] = None
     bio: Optional[str] = None
     address: Optional[str] = None
@@ -42,3 +42,6 @@ class SendOtpRequest(BaseModel):
 class VerifyOtpRequest(BaseModel):
     email: EmailStr
     code: str
+
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str

@@ -63,7 +63,7 @@ class AuthService:
             )
     
     @staticmethod
-    def register_user(db: Session, full_name: str, email: str, password: str) -> User:
+    def register_user(db: Session, full_name: str, email: str, password: str, is_email_verified: bool = False) -> User:
         """Жаңа клиент қолданушыны тіркеу"""
         # Email тексеру
         if db.query(User).filter(User.email == email).first():
@@ -74,15 +74,14 @@ class AuthService:
         
         # OTP тексеруін жасаймыз (optional: verify_otp-дан кейін ғана осы жерге келеді)
         
-
-        
         # Жаңа қолданушы жасау
         hashed_password = AuthService.get_password_hash(password)
         new_user = User(
             full_name=full_name,
             email=email,
             hashed_password=hashed_password,
-            role=UserRole.CLIENT
+            role=UserRole.CLIENT,
+            is_email_verified=is_email_verified
         )
         
         db.add(new_user)

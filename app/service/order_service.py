@@ -180,7 +180,8 @@ class OrderService:
             qr_code=qr_token,
             qr_expire_at=qr_expire,
             paid_by_subscription=paid_by_subscription,
-            subscription_id=subscription_id
+            subscription_id=subscription_id,
+            is_paid=paid_by_subscription
         )
 
 
@@ -376,53 +377,53 @@ class OrderService:
         
         print(f"Order {order_id} found with status: {order.status}")
         
-        if order.status != OrderStatus.PENDING:
-            print(f"Order {order_id} is not PENDING, current status: {order.status}")
-            raise HTTPException(
+        # Қабылдауға рұқсат беру (тек Pending емес, кез-келген статус үшін қателіктің алдын алу)
+        if order.status == OrderStatus.GIVEN or order.status == OrderStatus.CANCELLED:
+             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Заказды қабылдау мүмкін емес"
+                detail="Бұл тапсырысты қабылдау мүмкін емес"
             )
         
         order.status = OrderStatus.ACCEPTED
-        order.qr_used = True
         db.commit()
         db.refresh(order)
         print(f"Order {order_id} accepted successfully")
         return order
     
-@staticmethod
-def complete_order(db: Session, order_id: int) -> Order:
-    """Заказды аяқтау"""
-    order = db.query(Order).filter(Order.id == order_id).first()
+    @staticmethod
+    def complete_order(db: Session, order_id: int) -> Order:
+        """Заказды аяқтау"""
+        order = db.query(Order).filter(Order.id == order_id).first()
 
-    if not order:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Заказ табылмады"
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Заказ табылмады"
+            )
+
+        # Тек белсенді заказды ғана аяқтауға болады
+        allowed_statuses = [OrderStatus.ACCEPTED, OrderStatus.COOKING, OrderStatus.READY]
+        if order.status not in allowed_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Заказды аяқтау мүмкін емес (статус: {order.status})"
+            )
+
+        # Статусты өзгерту
+        order.status = OrderStatus.GIVEN  # COMPLETED емес, GIVEN
+
+        revenue = BranchRevenue(
+            branch_id=order.branch_id,
+            order_id=order.id,
+            subscription_id=order.subscription_id,
+            user_id=order.user_id,
+            amount=order.total_price,
+            discount_amount=0,
+            final_amount=order.total_price,
         )
+        db.add(revenue)
 
-    if order.status != OrderStatus.ACCEPTED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Заказды аяқтау мүмкін емес"
-        )
-
-    # Статусты өзгерту
-    order.status = OrderStatus.GIVEN  # COMPLETED емес, GIVEN
-
-
-    revenue = BranchRevenue(
-        branch_id=order.branch_id,
-        order_id=order.id,
-        subscription_id=order.subscription_id,
-        user_id=order.user_id,
-        amount=order.total_price,
-        discount_amount=0,
-        final_amount=order.total_price,
-    )
-    db.add(revenue)
-
-    db.commit()
-    db.refresh(order)
-    return order
+        db.commit()
+        db.refresh(order)
+        return order
 

@@ -167,7 +167,8 @@ def create_cashier(
         email=cashier_data.email,
         hashed_password=hashed_password,
         role=UserRole.CASHIER,
-        branch_id=current_user.branch_id
+        branch_id=current_user.branch_id,
+        is_email_verified=True
     )
 
     db.add(cashier)

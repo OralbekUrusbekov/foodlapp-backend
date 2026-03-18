@@ -14,28 +14,36 @@ async def broadcast_status(order: Order):
     await websocket_manager.broadcast_order_update({
         "id": order.id,
         "status": order.status,
-        "branch_id": order.branch_id
+        "is_paid": order.is_paid,
+        "branch_id": order.branch_id,
+        "user_id": order.user_id
     })
 
 @router.post("/orders/{id}/cooking")
-async def cooking(id: int, db: Session = Depends(get_db)):
+async def cooking(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_cashier_user)):
     order = db.get(Order, id)
+    if not order or order.branch_id != current_user.branch_id:
+        raise HTTPException(status_code=404, detail="Заказ табылмады")
     order.status = OrderStatus.COOKING
     db.commit()
     await broadcast_status(order)
     return order
 
 @router.post("/orders/{id}/ready")
-async def ready(id: int, db: Session = Depends(get_db)):
+async def ready(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_cashier_user)):
     order = db.get(Order, id)
+    if not order or order.branch_id != current_user.branch_id:
+        raise HTTPException(status_code=404, detail="Заказ табылмады")
     order.status = OrderStatus.READY
     db.commit()
     await broadcast_status(order)
     return order
 
 @router.post("/orders/{id}/given")
-async def given(id: int, db: Session = Depends(get_db)):
+async def given(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_cashier_user)):
     order = db.get(Order, id)
+    if not order or order.branch_id != current_user.branch_id:
+        raise HTTPException(status_code=404, detail="Заказ табылмады")
     order.status = OrderStatus.GIVEN
     db.commit()
     await broadcast_status(order)
@@ -47,7 +55,8 @@ def get_active_orders(db: Session = Depends(get_db), current_user: User = Depend
     """Барлық белсенді заказдар"""
     orders = db.query(Order).filter(
         Order.status.in_([OrderStatus.PENDING, OrderStatus.ACCEPTED, OrderStatus.COOKING, OrderStatus.READY]),
-        Order.branch_id == current_user.branch_id
+        Order.branch_id == current_user.branch_id,
+        Order.is_paid == True
     ).all()
     return orders
 
@@ -65,15 +74,19 @@ def get_pending_orders(db: Session = Depends(get_db), current_user: User = Depen
     """Күтіп тұрған заказдар"""
     orders = db.query(Order).filter(
         Order.status == OrderStatus.PENDING,
-        Order.branch_id == current_user.branch_id
+        Order.branch_id == current_user.branch_id,
+        Order.is_paid == True
     ).all()
     return orders
 
 @router.get("/orders/accepted")
 def get_accepted_orders(db: Session = Depends(get_db), current_user: User = Depends(get_cashier_user)):
     """Қабылданған заказдар"""
-    orders = db.query(Order).filter(Order.status == OrderStatus.ACCEPTED,
-                                    Order.branch_id == current_user.branch_id).all()
+    orders = db.query(Order).filter(
+        Order.status == OrderStatus.ACCEPTED,
+        Order.branch_id == current_user.branch_id,
+        Order.is_paid == True
+    ).all()
     return orders
 
 @router.post("/orders/verify-qr/{qr_code}")

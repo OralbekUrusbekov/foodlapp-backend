@@ -96,9 +96,10 @@ def create_admin(
     hashed_password = AuthService.get_password_hash(password)
     admin = User(
         full_name=full_name,
-        email=clean_email,  # Тазартылған email
+        email=clean_email,
         hashed_password=hashed_password,
-        role=UserRole.ADMIN
+        role=UserRole.ADMIN,
+        is_email_verified=True
     )
 
     db.add(admin)

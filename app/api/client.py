@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import ValidationError
 
 from app.models import Restaurant
@@ -14,6 +14,7 @@ from app.schemas.subscription_dto import SubscriptionResponse, UserSubscriptionR
 from app.schemas.food_dto import FoodResponse
 from app.models.user import User
 from app.models.branch import Branch
+from app.configuration.websocket.websocket_server import websocket_manager
 
 router = APIRouter()
 
@@ -154,7 +155,10 @@ def get_foods(branch_id: int, db: Session = Depends(get_db), current_user: User 
             "ingredients": f.ingredients,
             "image_url": f.image_url or (f.images[0].url if f.images and len(f.images) > 0 else None),
             "menu_type": f.menu_type.value if hasattr(f.menu_type, 'value') else f.menu_type,
-            "can_order_sub": can_order_sub if f.id in allowed_sub_food_ids else True # for regular foods it is always orderable via money
+            "can_order_sub": can_order_sub if f.id in allowed_sub_food_ids else True,
+            "branch_id": branch.id,
+            "branch_name": branch.name,
+            "restaurant_name": restaurant.name
         }
         for f in foods
     ]
@@ -181,13 +185,10 @@ def purchase_subscription(
     )
     return subscription
 
-@router.get("/subscriptions/my", response_model=UserSubscriptionResponse)
+@router.get("/subscriptions/my", response_model=Optional[UserSubscriptionResponse])
 def get_my_subscription(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Менің белсенді абонементім"""
-    subscription = SubscriptionService.get_user_subscription(db, current_user.id)
-    if not subscription:
-        raise HTTPException(status_code=404, detail="Белсенді абонемент жоқ")
-    return subscription
+    return SubscriptionService.get_user_subscription(db, current_user.id)
 
 @router.post("/subscriptions/cancel")
 def cancel_my_subscription(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
@@ -196,7 +197,7 @@ def cancel_my_subscription(db: Session = Depends(get_db), current_user: User = D
 
 # Заказдар
 @router.post("/orders", status_code=201)
-def create_order(
+async def create_order(
     request: CreateOrderRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_client_user)
@@ -207,6 +208,20 @@ def create_order(
         order = OrderService.create_order(
             db, current_user.id, request.branch_id, request.items
         )
+        
+        # Кассирге хабарлама жіберу (тек төленген болса)
+        if order.is_paid:
+            from app.configuration.websocket.websocket_server import websocket_manager
+            await websocket_manager.broadcast_new_order({
+                "id": order.id,
+                "status": order.status,
+                "total_price": order.total_price,
+                "branch_id": order.branch_id,
+                "created_at": order.created_at.isoformat() if hasattr(order.created_at, 'isoformat') else str(order.created_at),
+                "is_paid": order.is_paid,
+                "items": [{"food_name": i.food.name, "quantity": i.quantity, "price": i.price} for i in order.items]
+            })
+        
         return order
     except ValidationError as e:
         print(f"Validation error: {e}")
@@ -233,6 +248,41 @@ def get_order_by_id(order_id: int, db: Session = Depends(get_db), current_user: 
         raise HTTPException(status_code=404, detail="Заказ табылмады")
     return order
 
+@router.post("/orders/{order_id}/pay")
+async def pay_order(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+    """Заказ үшін төлем жасау (Mock Kaspi API)"""
+    from app.models.order import Order
+    order = db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Заказ табылмады")
+        
+    order.is_paid = True
+    db.commit()
+    db.refresh(order)
+    
+    # Кассирге статус жаңарғанын хабарлау (төленді)
+    from app.configuration.websocket.websocket_server import websocket_manager
+    # 1. Срочный обновление (badge және т.б.)
+    await websocket_manager.broadcast_order_update({
+        "id": order.id,
+        "status": order.status,
+        "is_paid": order.is_paid,
+        "branch_id": order.branch_id,
+        "user_id": order.user_id
+    })
+    # 2. Жаңа тапсырыс ретінде қосу (өйткені бұған дейін кассирде көрінбеді)
+    await websocket_manager.broadcast_new_order({
+        "id": order.id,
+        "status": order.status,
+        "total_price": order.total_price,
+        "branch_id": order.branch_id,
+        "created_at": order.created_at.isoformat() if hasattr(order.created_at, 'isoformat') else str(order.created_at),
+        "is_paid": order.is_paid,
+        "items": [{"food_name": i.food.name, "quantity": i.quantity, "price": i.price} for i in order.items]
+    })
+    
+    return order
+
 @router.get("/orders/last")
 def get_last_order(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Соңғы заказды көру"""
@@ -245,19 +295,30 @@ def get_last_order(db: Session = Depends(get_db), current_user: User = Depends(g
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     return order
 
+async def broadcast_status(order):
+    """WebSocket арқылы заказ статусын барлығына хабарлау"""
+    await websocket_manager.broadcast_order_update({
+        "id": order.id,
+        "status": order.status,
+        "branch_id": order.branch_id
+    })
+
 @router.post("/orders/verify-qr/{qr_code}")
-def client_verify_qr(qr_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+async def client_verify_qr(qr_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Клиент QR кодты тексеру және қабылдау"""
     order = OrderService.client_verify_qr_code(db, qr_code, current_user.id)
+    await broadcast_status(order)
     return {
         "message": "Заказ қабылданды",
         "order": order
     }
 
 @router.post("/orders/scan/{qr_code}")
-def scan_order_qr(qr_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
+async def scan_order_qr(qr_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Клиент QR код сканерлеу арқылы заказды алу"""
     result = OrderService.scan_order_by_qr(db, qr_code, current_user.id)
+    if "order" in result:
+        await broadcast_status(result["order"])
     return result
 
 @router.get("/menu/today")
@@ -270,8 +331,19 @@ def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(g
     from app.models.order import Order
     from datetime import datetime
     
-    # Кездейсоқ немесе кез-келген қолжетімді 8 тағамды алу (Басты бет үшін көрсетілім)
-    available_branch_menus = db.query(BranchMenu).filter(BranchMenu.is_available == True).limit(50).all()
+    # Бүх қолжетімді тағамдарды алу (Join арқылы оптимизациялау)
+    from sqlalchemy.orm import joinedload
+    from app.models.food import Food
+    from app.models.branch_menu import BranchMenu
+    from app.models.branch import Branch
+    from app.models.restaurant import Restaurant as RestaurantModel
+
+    # BranchMenu арқылы Food, Branch және Restaurant-ты бірден алу
+    # Бірақ sqlalchemy-де мұндай күрделі join-ды реттеуден көрі, алдымен филиалдар мен ресторандарды кэштеп алған дұрыс
+    all_branches = {b.id: b for b in db.query(Branch).filter(Branch.is_active == True).all()}
+    all_restaurants = {r.id: r for r in db.query(RestaurantModel).filter(RestaurantModel.is_active == True).all()}
+    
+    available_branch_menus = db.query(BranchMenu).filter(BranchMenu.is_available == True).all()
     
     if not available_branch_menus:
         return []
@@ -281,17 +353,15 @@ def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(g
     can_order_sub = False
     
     if user_sub:
+        # ... (stays same) ...
         now = datetime.now()
         now_utc = datetime.utcnow()
         sub = user_sub.subscription
-        
         can_order_sub = True
         
-        # 1. Total usage limit check
         if user_sub.remaining_meals is not None and user_sub.remaining_meals <= 0:
             can_order_sub = False
         
-        # 2. Daily limit check
         if can_order_sub and getattr(sub, "daily_limit", None):
             today_start_utc = datetime(now_utc.year, now_utc.month, now_utc.day)
             today_used = db.query(Order).filter(
@@ -303,13 +373,11 @@ def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(g
             if today_used >= sub.daily_limit:
                 can_order_sub = False
 
-        # 3. Time window check
         if can_order_sub and getattr(sub, "allowed_from", None) and getattr(sub, "allowed_to", None):
             current_time = now.time()
             if not (sub.allowed_from <= current_time <= sub.allowed_to):
                 can_order_sub = False
 
-        # ALWAYS get allowed foods if they have a sub
         subs = db.query(SubscriptionMenu.food_id).filter(
             SubscriptionMenu.subscription_id == user_sub.subscription_id
         ).all()
@@ -318,30 +386,37 @@ def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(g
     result = []
     seen_food_ids = set()
     
+    # Тағамдарды топтамамен алу (N+1 мәселесін шешу)
+    food_ids = [bm.food_id for bm in available_branch_menus]
+    all_foods = {f.id: f for f in db.query(Food).options(joinedload(Food.images)).filter(Food.id.in_(food_ids)).all()}
+    
     for bm in available_branch_menus:
-        if len(result) >= 8:
-            break
-        if bm.food_id not in seen_food_ids:
-            food = db.query(Food).filter(Food.id == bm.food_id).first()
-            if food:
-                m_type = food.menu_type.value if hasattr(food.menu_type, 'value') else food.menu_type
+        if bm.food_id in seen_food_ids:
+            continue
+            
+        food = all_foods.get(bm.food_id)
+        if food:
+            m_type = food.menu_type.value if hasattr(food.menu_type, 'value') else food.menu_type
+            
+            if m_type == "SUBSCRIPTION":
+                if not user_sub or food.id not in allowed_sub_food_ids:
+                    continue
+            
+            branch = all_branches.get(bm.branch_id)
+            restaurant = all_restaurants.get(branch.restaurant_id) if branch else None
                 
-                # Subscription тағамдарды тек рұқсат болса ғана қосамыз
-                if m_type == "SUBSCRIPTION":
-                    # Decoupled visibility from can_order_sub
-                    if not user_sub or food.id not in allowed_sub_food_ids:
-                        continue
-                    
-                result.append({
-                    "id": food.id,
-                    "name": food.name,
-                    "description": food.description,
-                    "price": food.price,
-                    "image_url": food.image_url or (food.images[0].url if food.images and len(food.images) > 0 else None),
-                    "menu_type": m_type,
-                    "branch_id": bm.branch_id,
-                    "can_order_sub": can_order_sub if m_type == "SUBSCRIPTION" else True
-                })
-                seen_food_ids.add(food.id)
+            result.append({
+                "id": food.id,
+                "name": food.name,
+                "description": food.description,
+                "price": food.price,
+                "image_url": food.image_url or (food.images[0].url if food.images and len(food.images) > 0 else None),
+                "menu_type": m_type,
+                "branch_id": bm.branch_id,
+                "branch_name": branch.name if branch else None,
+                "restaurant_name": restaurant.name if restaurant else None,
+                "can_order_sub": can_order_sub if m_type == "SUBSCRIPTION" else True
+            })
+            seen_food_ids.add(food.id)
                 
     return result

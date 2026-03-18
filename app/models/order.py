@@ -35,6 +35,7 @@ class Order(Base):
     qr_expire_at = Column(DateTime)
     paid_by_subscription = Column(Boolean, default=False)
     subscription_id = Column(Integer, ForeignKey("subscriptions.id"))
+    is_paid = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

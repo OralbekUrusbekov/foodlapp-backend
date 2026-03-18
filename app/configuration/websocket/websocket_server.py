@@ -19,12 +19,33 @@ class WebSocketManager:
         }
         # Филиалға байланысты байланыстар
         self.branch_connections: Dict[int, Set[WebSocket]] = {}
+        # Пайдаланушы ID-сіне байланысты байланыстар
+        self.user_connections: Dict[int, Set[WebSocket]] = {}
         # WebSocket-тің ID-сіне байланысты рөлдер
         self.connection_roles: Dict[str, str] = {}
         # WebSocket-тің ID-сіне байланысты филиалдар
         self.connection_branches: Dict[str, int] = {}
+        # WebSocket-тің ID-сіне байланысты пайдаланушылар
+        self.connection_users: Dict[str, int] = {}
 
-    async def connect(self, websocket: WebSocket, role: str, branch_id: int = None):
+    async def set_branch(self, websocket: WebSocket, branch_id: int):
+        """Пайдаланушыны филиалға тіркеу (динамикалық)"""
+        connection_id = id(websocket)
+        
+        # Ескі филиалдан шығару
+        old_branch = self.connection_branches.get(connection_id)
+        if old_branch and old_branch in self.branch_connections:
+            self.branch_connections[old_branch].discard(websocket)
+            
+        # Жаңа филиалға тіркеу
+        if branch_id not in self.branch_connections:
+            self.branch_connections[branch_id] = set()
+        self.branch_connections[branch_id].add(websocket)
+        self.connection_branches[connection_id] = branch_id
+        
+        logger.info(f"WebSocket филиалға тіркелді: branch_id={branch_id}")
+
+    async def connect(self, websocket: WebSocket, role: str, branch_id: int = None, user_id: int = None):
         """WebSocket байланысын орнату"""
         await websocket.accept()
         
@@ -43,8 +64,15 @@ class WebSocketManager:
                 self.branch_connections[branch_id] = set()
             self.branch_connections[branch_id].add(websocket)
             self.connection_branches[connection_id] = branch_id
+
+        # Пайдаланушыға байланысты сақтау
+        if user_id:
+            if user_id not in self.user_connections:
+                self.user_connections[user_id] = set()
+            self.user_connections[user_id].add(websocket)
+            self.connection_users[connection_id] = user_id
         
-        logger.info(f"WebSocket байланысы орнатылды: role={role}, branch_id={branch_id}")
+        logger.info(f"WebSocket байланысы орнатылды: role={role}, branch_id={branch_id}, user_id={user_id}")
         
         # Қош келдіңіз хабарламасы
         await self.send_personal_message({
@@ -67,10 +95,16 @@ class WebSocketManager:
         # Филиалдан алып тастау
         if branch_id and branch_id in self.branch_connections:
             self.branch_connections[branch_id].discard(websocket)
+
+        # Пайдаланушыдан алып тастау
+        connection_user_id = self.connection_users.get(connection_id)
+        if connection_user_id and connection_user_id in self.user_connections:
+            self.user_connections[connection_user_id].discard(websocket)
         
         # ID-лерден алып тастау
         self.connection_roles.pop(connection_id, None)
         self.connection_branches.pop(connection_id, None)
+        self.connection_users.pop(connection_id, None)
         
         logger.info(f"WebSocket байланысы үзілді: role={role}, branch_id={branch_id}")
 
@@ -115,6 +149,22 @@ class WebSocketManager:
         for connection in disconnected:
             self.disconnect(connection)
 
+    async def broadcast_to_user(self, message: dict, user_id: int):
+        """Белгілі пайдаланушыға хабарлама жіберу"""
+        if user_id not in self.user_connections:
+            return
+        
+        disconnected = set()
+        for connection in self.user_connections[user_id]:
+            try:
+                await connection.send_text(json.dumps(message))
+            except Exception as e:
+                logger.error(f"Пайдаланушыға хабарлама жіберу қатесі: {e}")
+                disconnected.add(connection)
+        
+        for connection in disconnected:
+            self.disconnect(connection)
+
     async def broadcast_order_update(self, order_data: dict):
         """Заказ обновлениесі туралы хабарлама жіберу"""
         message = {
@@ -132,6 +182,10 @@ class WebSocketManager:
         # Егер филиал белгілі болса, сол филиалға да жіберу
         if "branch_id" in order_data:
             await self.broadcast_to_branch(message, order_data["branch_id"])
+
+        # Пайдаланушының өзіне жіберу (Клиент үшін маңызды)
+        if "user_id" in order_data:
+            await self.broadcast_to_user(message, order_data["user_id"])
 
     async def broadcast_new_order(self, order_data: dict):
         """Жаңа заказ туралы хабарлама жіберу"""

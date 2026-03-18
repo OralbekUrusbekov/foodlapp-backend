@@ -21,7 +21,8 @@ from app.schemas.auth_dto import (
     TokenResponse, 
     UserResponse,
     SendOtpRequest,
-    VerifyOtpRequest
+    VerifyOtpRequest,
+    TokenRefreshRequest
 )
 from app.service.mail_service import MailService
 from app.service.auth_service import AuthService
@@ -89,12 +90,12 @@ async def google_auth_callback(
     # 🆕 Егер жоқ болса → REGISTER
     if not user:
         random_password = generate_random_password()
-
         user = AuthService.register_user(
             db=db,
             full_name=full_name,
             email=email,
             password=random_password,
+            is_email_verified=True
         )
 
     access_token = AuthService.create_access_token({"sub": user.id, "role": user.role.value})
@@ -170,7 +171,8 @@ def register(user_data: UserRegisterRequest, db: Session = Depends(get_db)):
             db=db,
             full_name=user_data.full_name,
             email=user_data.email,
-            password=user_data.password
+            password=user_data.password,
+            is_email_verified=True
         )
         # Тіркелгеннен кейін OTP-ны өшіреміз
         db.delete(otp)
@@ -209,10 +211,10 @@ def login(credentials: UserLoginRequest, db: Session = Depends(get_db)):
     )
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
+def refresh_token(data: TokenRefreshRequest, db: Session = Depends(get_db)):
     """Token жаңарту"""
     try:
-        payload = AuthService.decode_token(refresh_token)
+        payload = AuthService.decode_token(data.refresh_token)
         
         if payload.get("type") != "refresh":
             raise HTTPException(

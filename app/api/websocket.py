@@ -70,7 +70,7 @@ async def websocket_endpoint(
         if user and hasattr(user, 'branch_id') and user.branch_id:
             branch_id = user.branch_id
         
-        await websocket_manager.connect(websocket, role, branch_id)
+        await websocket_manager.connect(websocket, role, branch_id, user.id if user else None)
         
         # Хабарламаларды тыңдау
         while True:
@@ -162,6 +162,7 @@ async def handle_websocket_message(websocket: WebSocket, message: dict, user: Us
                         "id": order.id,
                         "status": order.status,
                         "branch_id": order.branch_id,
+                        "user_id": order.user_id,
                         "updated_by": user.id if user else None
                     })
                     
@@ -186,6 +187,10 @@ async def handle_websocket_message(websocket: WebSocket, message: dict, user: Us
             # Егер хабарламада жоқ болса, пайдаланушы профилінен алу
             if not branch_id and user and hasattr(user, 'branch_id') and user.branch_id:
                 branch_id = user.branch_id
+            
+            # Динамикалық филиалға тіркеу (Клиент үшін маңызды)
+            if branch_id:
+                await websocket_manager.set_branch(websocket, branch_id)
             
             # Белсенді заказдарды алу (күтілуде, қабылданды, дайындалуда, дайын)
             query = db.query(Order).filter(

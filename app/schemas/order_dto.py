@@ -34,6 +34,7 @@ class OrderResponse(BaseModel):
     status: str
     qr_code: Optional[str]
     qr_used: bool
+    is_paid: bool = False
     created_at: datetime
     items: List[OrderItemResponse]
     
