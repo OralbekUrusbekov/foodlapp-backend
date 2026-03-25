@@ -9,7 +9,7 @@ from app.models import Order
 from app.models.branch import Branch
 from app.models.subscription import Subscription, SubscriptionMenu
 from app.database.connection import get_db
-from app.configuration.security.dependencies import get_owner_user
+from app.configuration.security.dependencies import get_owner_user, get_current_active_user
 from app.models.user import User, UserRole
 from app.service.restaurant_service import RestaurantService
 from app.service.auth_service import AuthService
@@ -609,15 +609,22 @@ from datetime import date as date_type
 from app.models.restaurant import Restaurant as RestaurantModel
 
 
-def _get_owner_branch_ids(db: Session, owner_id: int, restaurant_id: int | None = None) -> list[int]:
-    """Owner-ға тиесілі барлық филиал ID-лерін алу."""
+def _get_owner_branch_ids(db: Session, current_user: User, restaurant_id: int | None = None) -> list[int]:
+    """Owner-ға тиесілі барлық филиал ID-лерін алу (admin үшін — барлық филиалдар)."""
+    # Admin sees everything
+    if current_user.role == UserRole.ADMIN:
+        q = db.query(Branch.id)
+        if restaurant_id:
+            q = q.filter(Branch.restaurant_id == restaurant_id)
+        return [b[0] for b in q.all()]
+
+    # Owner sees only their branches
     q = db.query(Branch.id).join(RestaurantModel, RestaurantModel.id == Branch.restaurant_id)
-    q = q.filter(RestaurantModel.owner_id == owner_id)
+    q = q.filter(RestaurantModel.owner_id == current_user.id)
     if restaurant_id:
-        # Ownership check
         restaurant = db.query(RestaurantModel).filter(
             RestaurantModel.id == restaurant_id,
-            RestaurantModel.owner_id == owner_id
+            RestaurantModel.owner_id == current_user.id
         ).first()
         if not restaurant:
             raise HTTPException(403, "Бұл ресторан сізге тиесілі емес")
@@ -629,10 +636,12 @@ def _get_owner_branch_ids(db: Session, owner_id: int, restaurant_id: int | None 
 def get_subscription_overview(
     restaurant_id: int | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_owner_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """Абонементтер бойынша жалпы статистика (барлық ресторандар немесе бір ресторан)"""
-    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(403, "Тек Owner немесе Admin қол жеткізе алады")
+    branch_ids = _get_owner_branch_ids(db, current_user, restaurant_id)
 
     active_subscriptions = db.query(Subscription).filter(Subscription.is_active == True).count()
 
@@ -671,10 +680,12 @@ def get_daily_subscription_stats(
     days: int = 7,
     restaurant_id: int | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_owner_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """Күнделікті абонемент қолдану статистикасы"""
-    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(403, "Тек Owner немесе Admin қол жеткізе алады")
+    branch_ids = _get_owner_branch_ids(db, current_user, restaurant_id)
 
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=days)
@@ -711,10 +722,12 @@ def get_daily_subscription_stats(
 def get_subscription_stats_by_branch(
     restaurant_id: int | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_owner_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """Филиалдар бойынша абонемент статистикасы"""
-    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(403, "Тек Owner немесе Admin қол жеткізе алады")
+    branch_ids = _get_owner_branch_ids(db, current_user, restaurant_id)
     branches = db.query(Branch).filter(Branch.id.in_(branch_ids)).all()
 
     result = []
@@ -760,10 +773,12 @@ def get_subscription_stats_by_branch(
 def get_subscription_stats_by_type(
     restaurant_id: int | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_owner_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """Абонемент түрлері бойынша статистика"""
-    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(403, "Тек Owner немесе Admin қол жеткізе алады")
+    branch_ids = _get_owner_branch_ids(db, current_user, restaurant_id)
 
     stats = (
         db.query(
@@ -817,10 +832,12 @@ class DateRangeRequest(BaseModel):
 def get_subscription_stats_custom_range(
     request: DateRangeRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_owner_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """Кез келген кезеңдегі абонемент статистикасы"""
-    branch_ids = _get_owner_branch_ids(db, current_user.id, request.restaurant_id)
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(403, "Тек Owner немесе Admin қол жеткізе алады")
+    branch_ids = _get_owner_branch_ids(db, current_user, request.restaurant_id)
 
     query = (
         db.query(
@@ -871,13 +888,15 @@ def export_subscription_stats(
     start_date: str | None = None,
     end_date: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_owner_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """Абонемент статистикасын экспорттау (CSV)"""
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(403, "Тек Owner немесе Admin қол жеткізе алады")
     import csv
     from io import StringIO
 
-    branch_ids = _get_owner_branch_ids(db, current_user.id, restaurant_id)
+    branch_ids = _get_owner_branch_ids(db, current_user, restaurant_id)
 
     if not start_date:
         start_date = (datetime.utcnow() - timedelta(days=30)).date().isoformat()

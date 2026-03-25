@@ -8,10 +8,7 @@ class Gender(str, enum.Enum):
     FEMALE = "female"
     OTHER = "other"
 
-class Goal(str, enum.Enum):
-    LOSE_WEIGHT = "lose_weight"
-    GAIN_WEIGHT = "gain_weight"
-    MAINTAIN = "maintain"
+
 
 class ActivityLevel(str, enum.Enum):
     LOW = "low"
@@ -29,7 +26,7 @@ class AIProfile(Base):
     height = Column(Float, nullable=True) # in cm
     weight = Column(Float, nullable=True) # in kg
     
-    goal = Column(SQLEnum(Goal, name="goal", values_callable=lambda enum: [e.value for e in enum]), nullable=True)
+    goal = Column(String, nullable=True) # comma separated goals
     activity_level = Column(SQLEnum(ActivityLevel, name="activitylevel", values_callable=lambda enum: [e.value for e in enum]), nullable=True)
     
     allergies = Column(String, nullable=True) # comma separated

@@ -8,10 +8,7 @@ class Gender(str, Enum):
     FEMALE = "female"
     OTHER = "other"
 
-class Goal(str, Enum):
-    LOSE_WEIGHT = "lose_weight"
-    GAIN_WEIGHT = "gain_weight"
-    MAINTAIN = "maintain"
+
 
 class ActivityLevel(str, Enum):
     LOW = "low"
@@ -23,7 +20,7 @@ class AIProfileBase(BaseModel):
     gender: Optional[Gender] = None
     height: Optional[float] = None
     weight: Optional[float] = None
-    goal: Optional[Goal] = None
+    goal: Optional[str] = None
     activity_level: Optional[ActivityLevel] = None
     allergies: Optional[str] = None
     dislikes: Optional[str] = None

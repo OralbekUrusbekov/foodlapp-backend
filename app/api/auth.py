@@ -22,7 +22,11 @@ from app.schemas.auth_dto import (
     UserResponse,
     SendOtpRequest,
     VerifyOtpRequest,
-    TokenRefreshRequest
+    TokenRefreshRequest,
+    ChangePasswordRequest,
+    ChangeEmailRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest
 )
 from app.service.mail_service import MailService
 from app.service.auth_service import AuthService
@@ -222,7 +226,7 @@ def refresh_token(data: TokenRefreshRequest, db: Session = Depends(get_db)):
                 detail="Refresh token қате"
             )
         
-        user_id = payload.get("sub")
+        user_id = int(payload.get("sub"))
         user = db.query(User).filter(User.id == user_id).first()
         
         if not user:
@@ -267,6 +271,85 @@ def update_me(data: UserUpdateRequest, db: Session = Depends(get_db), current_us
     db.refresh(user)
 
     return user
+
+@router.post("/me/change-password")
+def change_password(data: ChangePasswordRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """Change current user's password"""
+    if not AuthService.verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Қазіргі құпиясөз қате")
+    
+    current_user.hashed_password = AuthService.get_password_hash(data.new_password)
+    db.commit()
+    return {"message": "Құпиясөз сәтті өзгертілді"}
+
+@router.post("/me/change-email/send-otp")
+async def send_change_email_otp(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    # ForgotPasswordRequest reused here as it only needs 'email'
+    # We shouldn't let them easily change to an existing email unconditionally, but we'll check it here.
+    existing_user = db.query(User).filter(User.email == data.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Бұл email бос емес")
+
+    otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
+    db_otp = OtpCode(email=data.email, code=otp_code, expires_at=datetime.utcnow() + timedelta(minutes=10))
+    db.add(db_otp)
+    db.commit()
+    
+    try:
+        MailService.send_otp_email(data.email, otp_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Email жіберу қатесі: {str(e)}")
+        
+    return {"message": "Растау коды жаңа email-ға жіберілді"}
+
+@router.post("/me/change-email/verify")
+def verify_change_email(data: ChangeEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    otp = db.query(OtpCode).filter(OtpCode.email == data.new_email, OtpCode.code == data.otp_code).order_by(OtpCode.created_at.desc()).first()
+    if not otp or otp.is_expired():
+        raise HTTPException(status_code=400, detail="Код қате немесе мерзімі өткен")
+    
+    existing_user = db.query(User).filter(User.email == data.new_email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Бұл email бос емес")
+
+    current_user.email = data.new_email
+    db.delete(otp)
+    db.commit()
+    return {"message": "Email сәтті өзгертілді"}
+
+@router.post("/forgot-password")
+async def send_forgot_password_otp(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Бұл email жүйеде тіркелмеген")
+
+    otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
+    db_otp = OtpCode(email=data.email, code=otp_code, expires_at=datetime.utcnow() + timedelta(minutes=10))
+    db.add(db_otp)
+    db.commit()
+    
+    try:
+        MailService.send_password_reset_email(data.email, otp_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Email жіберу қатесі: {str(e)}")
+        
+    return {"message": "Растау коды email-ға жіберілді"}
+
+@router.post("/reset-password")
+def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Бұл email жүйеде тіркелмеген")
+
+    otp = db.query(OtpCode).filter(OtpCode.email == data.email, OtpCode.code == data.otp_code).order_by(OtpCode.created_at.desc()).first()
+    if not otp or otp.is_expired():
+        raise HTTPException(status_code=400, detail="Код қате немесе мерзімі өткен")
+
+    user.hashed_password = AuthService.get_password_hash(data.new_password)
+    db.delete(otp)
+    db.commit()
+    
+    return {"message": "Құпиясөз сәтті қалпына келтірілді"}
 
 @router.post("/logout")
 def logout(current_user: User = Depends(get_current_active_user)):

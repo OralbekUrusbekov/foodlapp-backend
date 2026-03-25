@@ -42,7 +42,7 @@ class MailService:
         message.attach(part2)
 
         try:
-            with SMTP(smtp_server, smtp_port) as server:
+            with SMTP(smtp_server, smtp_port, timeout=5) as server:
                 server.starttls()
                 server.login(sender_email, password)
                 server.sendmail(sender_email, receiver_email, message.as_string())
@@ -52,3 +52,49 @@ class MailService:
             print(f"⚠️ FALLBACK: Сәлеметсіз бе! {receiver_email} үшін растау коды: {otp_code}")
             # Қатені қайта лақтырмаймыз, сонда тіркелу процесі тоқтамайды
             # Бірақ өндірісте (production) қайта лақтыру керек
+
+    @staticmethod
+    def send_password_reset_email(receiver_email: str, otp_code: str):
+        """SMTP-мен құпиясөзді қалпына келтіру кодын жіберу"""
+        sender_email = getattr(settings, "MAIL_USERNAME", None)
+        password = getattr(settings, "MAIL_PASSWORD", None)
+        smtp_server = getattr(settings, "MAIL_SERVER", "smtp.gmail.com")
+        smtp_port = getattr(settings, "MAIL_PORT", 587)
+
+        if not sender_email or not password:
+            print(f"DEBUG: Email settings not configured. Reset OTP for {receiver_email} is {otp_code}")
+            return
+
+        message = MIMEMultipart("alternative")
+        message["Subject"] = "FoodLapp - Құпиясөзді қалпына келтіру"
+        message["From"] = f"FoodLapp <{sender_email}>"
+        message["To"] = receiver_email
+
+        text = f"Сіздің құпиясөзді қалпына келтіру кодыңыз: {otp_code}"
+        html = f"""
+        <html>
+          <body style="font-family: sans-serif; padding: 20px;">
+            <h2 style="color: #FF5722;">Құрметті қолданушы!</h2>
+            <p>FoodLapp қолданбасында құпиясөзіңізді қалпына келтіру үшін төмендегі кодты енгізіңіз:</p>
+            <div style="background: #f4f4f4; padding: 15px; font-size: 24px; font-weight: bold; letter-spacing: 5px; text-align: center; border-radius: 10px;">
+              {otp_code}
+            </div>
+            <p>Бұл код 10 минут ішінде жарамды. Егер бұл сұрауды сіз жасамаған болсаңыз, осы хатты елемеңіз.</p>
+          </body>
+        </html>
+        """
+
+        part1 = MIMEText(text, "plain")
+        part2 = MIMEText(html, "html")
+        message.attach(part1)
+        message.attach(part2)
+
+        try:
+            with SMTP(smtp_server, smtp_port, timeout=5) as server:
+                server.starttls()
+                server.login(sender_email, password)
+                server.sendmail(sender_email, receiver_email, message.as_string())
+            print(f"✅ Password reset email successfully sent to {receiver_email}")
+        except Exception as e:
+            print(f"❌ Error sending password reset email: {e}")
+            print(f"⚠️ FALLBACK: РЕСЕТ КОД {receiver_email} үшін: {otp_code}")

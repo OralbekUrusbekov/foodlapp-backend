@@ -68,7 +68,9 @@ def get_my_branches(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_admin_user)
 ):
-    restaurant = get_admin_restaurant(db, current_user.id)
+    restaurant = db.query(Restaurant).filter(Restaurant.admin_id == current_user.id).first()
+    if not restaurant:
+        return []
     branches = db.query(Branch).filter(Branch.restaurant_id == restaurant.id).all()
     return branches
 
@@ -170,7 +172,9 @@ def get_canteen_admins(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_admin_user)
 ):
-    restaurant = get_admin_restaurant(db, current_user.id)
+    restaurant = db.query(Restaurant).filter(Restaurant.admin_id == current_user.id).first()
+    if not restaurant:
+        return []
     branch_ids = db.query(Branch.id).filter(Branch.restaurant_id == restaurant.id).all()
     branch_ids = [b[0] for b in branch_ids]
 

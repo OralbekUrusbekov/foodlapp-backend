@@ -112,12 +112,20 @@ class AuthService:
     def get_current_user(db: Session, token: str) -> User:
         """Ағымдағы қолданушыны алу"""
         payload = AuthService.decode_token(token)
-        user_id: int = payload.get("sub")
+        raw_id = payload.get("sub")
         
-        if user_id is None:
+        if raw_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Қолданушы табылмады"
+            )
+        
+        try:
+            user_id = int(raw_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token жарамсыз"
             )
         
         user = db.query(User).filter(User.id == user_id).first()

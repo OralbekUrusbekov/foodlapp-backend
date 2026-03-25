@@ -18,8 +18,6 @@ class TokenResponse(BaseModel):
 class UserUpdateRequest(BaseModel):
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
-    bio: Optional[str] = None
-    address: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -30,8 +28,6 @@ class UserResponse(BaseModel):
     is_active: bool
     is_email_verified: Optional[bool] = False
     avatar_url: Optional[str] = None
-    bio: Optional[str] = None
-    address: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -45,3 +41,19 @@ class VerifyOtpRequest(BaseModel):
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=6)
+
+class ChangeEmailRequest(BaseModel):
+    new_email: EmailStr
+    otp_code: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp_code: str
+    new_password: str = Field(..., min_length=6)

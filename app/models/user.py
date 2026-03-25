@@ -33,8 +33,6 @@ class User(Base):
 
     # Profile fields
     avatar_url = Column(String, nullable=True)
-    bio = Column(String, nullable=True)
-    address = Column(String, nullable=True)
 
     # ForeignKey-лерді User-ден толық алып тастаймыз!
 
