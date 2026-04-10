@@ -80,7 +80,6 @@ def get_branch_foods(db: Session = Depends(get_db), current_user: User = Depends
             "id": f.id,
             "name": f.name,
             "description": f.description,
-            "price": f.price,
             "calories": f.calories,
             "ingredients": f.ingredients,
             "image_url": f.image_url,
@@ -201,7 +200,7 @@ def get_order_stats(db: Session = Depends(get_db), current_user: User = Depends(
     ).all()
 
     total_today = len(today_orders)
-    revenue_today = sum(order.total_price for order in today_orders)
+    revenue_today = 0.0
 
     return {
         "today_orders": total_today,

@@ -19,7 +19,6 @@ class Order(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False)
-    total_price = Column(Float, nullable=False)
     status = Column(
         SQLEnum(
             OrderStatus,
@@ -38,21 +37,25 @@ class Order(Base):
     is_paid = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    receipt_url = Column(String, nullable=True)
+
     # Relationships
     user = relationship("User", back_populates="orders")
     branch = relationship("Branch", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     subscription = relationship("Subscription", back_populates="orders")
+    
+    @property
+    def branch_name(self):
+        return self.branch.name if self.branch else None
 
 class OrderItem(Base):
     __tablename__ = "order_items"
     
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
-    food_id = Column(Integer, ForeignKey("foods.id"), nullable=False)
+    food_id = Column(Integer, ForeignKey("foods.id", ondelete="SET NULL"), nullable=True)
     quantity = Column(Integer, default=1)
-    price = Column(Float, nullable=False)
     food_name = Column(String, nullable=False)
     subscription_id = Column(Integer, ForeignKey("subscriptions.id"), nullable=True)
     paid_by_subscription = Column(Boolean, default=False)

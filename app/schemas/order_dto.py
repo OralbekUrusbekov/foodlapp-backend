@@ -21,7 +21,6 @@ class OrderItemResponse(BaseModel):
     food_id: int
     food_name: str
     quantity: int
-    price: float
     
     class Config:
         from_attributes = True
@@ -30,12 +29,13 @@ class OrderResponse(BaseModel):
     id: int
     user_id: int
     branch_id: int
-    total_price: float
     status: str
     qr_code: Optional[str]
     qr_used: bool
-    is_paid: bool = False
+    is_paid: Optional[bool] = None
+    receipt_url: Optional[str] = None
     created_at: datetime
+    branch_name: Optional[str] = None
     items: List[OrderItemResponse]
     
     class Config:

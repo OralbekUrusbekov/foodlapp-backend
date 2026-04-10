@@ -35,6 +35,11 @@ async def websocket_endpoint(
         
         # Токен арқылы пайдаланушыны тексеру
         user = None
+        
+        # Check cookies if token is not provided in query params
+        if not token:
+            token = websocket.cookies.get("access_token")
+
         if token:
             try:
                 # Токен тексеру логикасы
@@ -161,6 +166,7 @@ async def handle_websocket_message(websocket: WebSocket, message: dict, user: Us
                     await websocket_manager.broadcast_order_update({
                         "id": order.id,
                         "status": order.status,
+                        "is_paid": order.is_paid,
                         "branch_id": order.branch_id,
                         "user_id": order.user_id,
                         "updated_by": user.id if user else None
@@ -212,7 +218,6 @@ async def handle_websocket_message(websocket: WebSocket, message: dict, user: Us
                 orders_data.append({
                     "id": order.id,
                     "status": order.status,
-                    "total_price": order.total_price,
                     "branch_id": order.branch_id,
                     "created_at": order.created_at.isoformat(),
                     "user_id": order.user_id,

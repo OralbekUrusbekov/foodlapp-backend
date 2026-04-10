@@ -7,7 +7,6 @@ class FoodResponse(BaseModel):
     id: int
     name: str
     description: Optional[str]
-    price: float
     calories: Optional[int]
     ingredients: Optional[str]
     image_url: Optional[str] = None
@@ -19,7 +18,6 @@ class FoodResponse(BaseModel):
 class CreateFoodRequest(BaseModel):
     name: str
     description: Optional[str] = None
-    price: float
     calories: Optional[int] = None
     ingredients: Optional[str] = None
     image_url: Optional[str] = None
@@ -28,7 +26,6 @@ class CreateFoodRequest(BaseModel):
 class UpdateFoodRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    price: Optional[float] = None
     calories: Optional[int] = None
     ingredients: Optional[str] = None
     image_url: Optional[str] = None

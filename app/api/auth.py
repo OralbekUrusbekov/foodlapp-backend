@@ -2,7 +2,7 @@ from typing import Annotated
 
 import aiohttp
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Response, Request
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse
 import secrets
@@ -51,6 +51,7 @@ async def get_google_auth():
 async def google_auth_callback(
     code: Annotated[str, Body()],
     state: Annotated[str, Body()],
+    response: Response,
     db: Session = Depends(get_db),
 ):
     if state not in state_storage:
@@ -68,8 +69,8 @@ async def google_auth_callback(
                 "grant_type": "authorization_code",
                 "code": code,
             },
-        ) as response:
-            res = await response.json()
+        ) as google_response:
+            res = await google_response.json()
 
     id_token = res.get("id_token")
     if not id_token:
@@ -105,6 +106,23 @@ async def google_auth_callback(
     access_token = AuthService.create_access_token({"sub": user.id, "role": user.role.value})
     refresh_token = AuthService.create_refresh_token({"sub": user.id})
 
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -114,15 +132,18 @@ async def google_auth_callback(
 async def send_otp(data: SendOtpRequest, db: Session = Depends(get_db)):
     # 1. Генерация OTP
     otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
+    normalized_email = data.email.lower().strip()
     
     # 2. Сақтау
     db_otp = OtpCode(
-        email=data.email,
+        email=normalized_email,
         code=otp_code,
         expires_at=datetime.utcnow() + timedelta(minutes=10)
     )
     db.add(db_otp)
     db.commit()
+    
+    print(f"[DEBUG] send_otp: email={normalized_email}, code={otp_code}")
     
     # 3. Жіберу
     try:
@@ -134,38 +155,52 @@ async def send_otp(data: SendOtpRequest, db: Session = Depends(get_db)):
 
 @router.post("/verify-otp")
 async def verify_otp(data: VerifyOtpRequest, db: Session = Depends(get_db)):
+    normalized_email = data.email.lower().strip()
     otp = db.query(OtpCode).filter(
-        OtpCode.email == data.email,
+        OtpCode.email == normalized_email,
         OtpCode.code == data.code
     ).order_by(OtpCode.created_at.desc()).first()
     
     if not otp or otp.is_expired():
+        print(f"[DEBUG] verify_otp FAIL: email={normalized_email}, code={data.code}")
         raise HTTPException(status_code=400, detail="Код қате немесе мерзімі өткен")
     
     # OTP-ны расталды деп белгілейміз (немесе өшіреміз)
     # Қазірше өшіре салсақ та болады, бірақ register-де тексеру үшін керек
     # Сондықтан жаңа өріс қосайық немесе User-ді алдын-ала жасайық
     
-    user = db.query(User).filter(User.email == data.email).first()
+    user = db.query(User).filter(User.email == normalized_email).first()
     if user:
         user.is_email_verified = True
-    else:
-        # User жоқ болса, бұл жаңа тіркелу. 
-        # Register кезінде қалай тексереміз? 
-        # OTP кестесінде verified=True қылып қалдырайық.
-        otp.code = "VERIFIED" # арнайы белгі
+        print(f"[DEBUG] verify_otp: Already existing user {normalized_email} marked as verified")
+    
+    # ALWAYS set to VERIFIED for registration flow to proceed
+    otp.code = "VERIFIED" # арнайы белгі
+    print(f"[DEBUG] verify_otp SUCCESS: email={normalized_email} record set to VERIFIED")
     
     db.commit()
     return {"message": "Email сәтті расталды", "verified": True}
 
 
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(user_data: UserRegisterRequest, db: Session = Depends(get_db)):
-    # Email расталғанын тексеру
+def register(user_data: UserRegisterRequest, response: Response, db: Session = Depends(get_db)):
+    normalized_email = user_data.email.lower().strip()
+    
+    # 1. Тіркелген қолданушы бар ма?
+    existing_user = db.query(User).filter(User.email == normalized_email).first()
+    if existing_user and existing_user.is_email_verified:
+        print(f"[DEBUG] register: User {normalized_email} already exists and is verified.")
+        raise HTTPException(status_code=400, detail="Бұл email бұрыннан тіркелген. Кіруді (Login) қолданыңыз.")
+
+    # 2. Email расталғанын тексеру (OTP)
     otp = db.query(OtpCode).filter(
-        OtpCode.email == user_data.email,
+        OtpCode.email == normalized_email,
         OtpCode.code == "VERIFIED"
     ).first()
+    
+    print(f"[DEBUG] register: email={normalized_email}, verified_otp_found={otp is not None}")
     
     if not otp:
         raise HTTPException(status_code=400, detail="Email расталмаған. Кодты тексеріңіз.")
@@ -191,13 +226,30 @@ def register(user_data: UserRegisterRequest, db: Session = Depends(get_db)):
     access_token = AuthService.create_access_token({"sub": user.id, "role": user.role.value})
     refresh_token = AuthService.create_refresh_token({"sub": user.id})
 
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token
     )
 
 @router.post("/login", response_model=TokenResponse)
-def login(credentials: UserLoginRequest, db: Session = Depends(get_db)):
+def login(credentials: UserLoginRequest, response: Response, db: Session = Depends(get_db)):
     """Жүйеге кіру (логин)"""
     user = AuthService.authenticate_user(
         db=db,
@@ -209,16 +261,44 @@ def login(credentials: UserLoginRequest, db: Session = Depends(get_db)):
     access_token = AuthService.create_access_token({"sub": user.id, "role": user.role.value})
     refresh_token = AuthService.create_refresh_token({"sub": user.id})
     
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token
     )
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh_token(data: TokenRefreshRequest, db: Session = Depends(get_db)):
+def refresh_token(request: Request, response: Response, data: TokenRefreshRequest = None, db: Session = Depends(get_db)):
     """Token жаңарту"""
     try:
-        payload = AuthService.decode_token(data.refresh_token)
+        # Check cookie first, fallback to JSON body if not present
+        token_to_refresh = request.cookies.get("refresh_token")
+        if not token_to_refresh and data:
+            token_to_refresh = data.refresh_token
+            
+        if not token_to_refresh:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token табылмады"
+            )
+
+        payload = AuthService.decode_token(token_to_refresh)
         
         if payload.get("type") != "refresh":
             raise HTTPException(
@@ -239,6 +319,23 @@ def refresh_token(data: TokenRefreshRequest, db: Session = Depends(get_db)):
         new_access_token = AuthService.create_access_token({"sub": user.id, "role": user.role.value})
         new_refresh_token = AuthService.create_refresh_token({"sub": user.id})
         
+        response.set_cookie(
+            key="access_token",
+            value=new_access_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=new_refresh_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+        )
+
         return TokenResponse(
             access_token=new_access_token,
             refresh_token=new_refresh_token
@@ -352,7 +449,8 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
     return {"message": "Құпиясөз сәтті қалпына келтірілді"}
 
 @router.post("/logout")
-def logout(current_user: User = Depends(get_current_active_user)):
+def logout(response: Response, current_user: User = Depends(get_current_active_user)):
     """Жүйеден шығу"""
-    # Client-тегі токенді өшіру керек
+    response.delete_cookie("access_token", secure=True, samesite="lax")
+    response.delete_cookie("refresh_token", secure=True, samesite="lax")
     return {"message": "Сәтті шықтыңыз"} 

@@ -60,6 +60,9 @@ class UserSubscription(Base):
     remaining_meals = Column(Integer)
     is_active = Column(Boolean, default=True)
 
+    status = Column(String, default="ACTIVE")
+    receipt_url = Column(String, nullable=True)
+
     user = relationship("User", back_populates="subscriptions")
     subscription = relationship("Subscription", back_populates="user_subscriptions")
 

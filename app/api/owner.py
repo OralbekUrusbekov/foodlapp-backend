@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.models import Order
 from app.models.branch import Branch
-from app.models.subscription import Subscription, SubscriptionMenu
+from app.models.subscription import Subscription, SubscriptionMenu, UserSubscription
 from app.database.connection import get_db
 from app.configuration.security.dependencies import get_owner_user, get_current_active_user
 from app.models.user import User, UserRole
@@ -291,6 +291,90 @@ def get_all_subscriptions(
 ):
     return db.query(Subscription).all()
 
+@router.get("/subscriptions/requests")
+def get_subscription_requests(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    """Жаңа абонемент өтініштерін көру"""
+    from sqlalchemy.orm import joinedload
+    requests = db.query(UserSubscription).options(
+        joinedload(UserSubscription.user),
+        joinedload(UserSubscription.subscription)
+    ).order_by(UserSubscription.id.desc()).all()
+    
+    result = []
+    for r in requests:
+        result.append({
+            "id": r.id,
+            "user_id": r.user.id,
+            "user_name": r.user.full_name,
+            "user_email": r.user.email,
+            "subscription_name": r.subscription.name,
+            "price": r.subscription.price,
+            "receipt_url": r.receipt_url,
+            "status": r.status,
+            "created_at": r.start_date.isoformat() if r.start_date else None
+        })
+    return result
+
+@router.post("/subscriptions/requests/{request_id}/approve")
+def approve_subscription_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    from sqlalchemy.orm import joinedload
+    request = db.query(UserSubscription).options(joinedload(UserSubscription.subscription)).filter(
+        UserSubscription.id == request_id
+    ).first()
+    
+    if not request:
+        raise HTTPException(status_code=404, detail="Өтініш табылмады")
+        
+    # Басқа белсенді абонементі бар-жоғын тексеру
+    active_exists = db.query(UserSubscription).filter(
+        UserSubscription.user_id == request.user_id,
+        UserSubscription.status == "ACTIVE",
+        UserSubscription.id != request_id
+    ).first()
+    
+    if active_exists:
+        raise HTTPException(status_code=400, detail="Бұл қолданушыда қазірдің өзінде белсенді абонемент бар")
+        
+    request.status = "ACTIVE"
+    request.is_active = True
+    request.start_date = datetime.utcnow()
+    request.end_date = request.start_date + timedelta(days=request.subscription.duration_days)
+    
+    # Басқа күтілудегі (PENDING) өтініштерін автоматты түрде қабылдамау (REJECTED)
+    db.query(UserSubscription).filter(
+        UserSubscription.user_id == request.user_id,
+        UserSubscription.id != request_id,
+        UserSubscription.status == "PENDING"
+    ).update({"status": "REJECTED", "is_active": False})
+    
+    db.commit()
+    return {"message": "Абонемент мақұлданды, қалған өтініштер автоматты түрде қабылданбады"}
+
+@router.post("/subscriptions/requests/{request_id}/reject")
+def reject_subscription_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_owner_user)
+):
+    request = db.query(UserSubscription).filter(
+        UserSubscription.id == request_id
+    ).first()
+    
+    if not request:
+        raise HTTPException(status_code=404, detail="Өтініш табылмады")
+        
+    request.status = "REJECTED"
+    request.is_active = False
+    db.commit()
+    return {"message": "Абонемент қабылданбады"}
+
 
 @router.put("/subscriptions/{sub_id}")
 def update_subscription(
@@ -365,7 +449,6 @@ def get_subscription_menu(
             "id": item.food.id,
             "name": item.food.name,
             "description": item.food.description,
-            "price": item.food.price,
             "menu_type": item.food.menu_type.value if hasattr(item.food.menu_type, "value") else item.food.menu_type
         }
         for item in menu_items
@@ -462,7 +545,6 @@ def get_owner_foods(
                 "id": f.id,
                 "name": f.name,
                 "description": f.description,
-                "price": f.price,
                 "calories": f.calories,
                 "ingredients": f.ingredients,
                 "image_url": f.image_url,
@@ -480,7 +562,6 @@ def get_owner_foods(
 class CreateSubscriptionFoodRequest(BaseModel):
     name: str
     description: str | None = None
-    price: float
     calories: int | None = None
     ingredients: str | None = None
     image_url: str | None = None
@@ -497,7 +578,6 @@ def create_subscription_food(
     food = Food(
         name=food_data.name,
         description=food_data.description,
-        price=food_data.price,
         calories=food_data.calories,
         ingredients=food_data.ingredients,
         image_url=food_data.image_url,
@@ -512,7 +592,6 @@ def create_subscription_food(
         "id": food.id,
         "name": food.name,
         "description": food.description,
-        "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
         "image_url": food.image_url,
@@ -522,7 +601,6 @@ def create_subscription_food(
 class UpdateSubscriptionFoodRequest(BaseModel):
     name: str | None = None
     description: str | None = None
-    price: float | None = None
     calories: int | None = None
     ingredients: str | None = None
     image_url: str | None = None
@@ -555,7 +633,6 @@ def update_subscription_food(
         "id": food.id,
         "name": food.name,
         "description": food.description,
-        "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
         "image_url": food.image_url,
@@ -909,7 +986,6 @@ def export_subscription_stats(
             Branch.name.label("branch_name"),
             Subscription.name.label("subscription_name"),
             User.full_name.label("user_name"),
-            Order.total_price,
         )
         .join(Branch, Branch.id == Order.branch_id)
         .join(Subscription, Subscription.id == Order.subscription_id)
@@ -926,14 +1002,13 @@ def export_subscription_stats(
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Күні', 'Филиал', 'Абонемент', 'Клиент', 'Заказ сомасы'])
+    writer.writerow(['Күні', 'Филиал', 'Абонемент', 'Клиент'])
     for stat in stats:
         writer.writerow([
             stat.date,
             stat.branch_name,
             stat.subscription_name,
             stat.user_name,
-            stat.total_price,
         ])
 
     return {

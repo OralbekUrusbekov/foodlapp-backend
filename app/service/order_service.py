@@ -66,13 +66,9 @@ class OrderService:
             elif food.menu_type == MenuType.REGULAR:
                 has_regular_food = True
 
-            item_price = food.price * item.quantity
-            total_price += item_price
-
             order_items_data.append({
                 "food_id": food.id,
                 "quantity": item.quantity,
-                "price": item_price,
                 "food_name": food.name
             })
             
@@ -91,78 +87,115 @@ class OrderService:
         subscription_id = None
         
         if has_regular_food:
-            print("Order contains regular food: Proceeding as paid order (no subscription applied)")
-        elif has_subscription_food:
-            # Note: end_date is likely stored in UTC if using utcnow default, 
-            # but for simplicity we compare with now(). If issues persist, we might need to unify.
-            active_subscription = db.query(UserSubscription).filter(
-                UserSubscription.user_id == user_id,
-                UserSubscription.is_active == True,
-                UserSubscription.end_date > datetime.utcnow() # end_date is usually UTC
-            ).first()
+            raise HTTPException(
+                status_code=400,
+                detail="Кәдімгі тағамдарға тапсырыс беру мүмкін емес. Тек абонемент арқылы алуға болады."
+            )
 
-            print(f"Active subscription found: {active_subscription}")
+        # ---------- Daily Limit Check (Strictly one order per UTC day) ----------
+        now_utc = datetime.utcnow()
+        today_start_utc = datetime(now_utc.year, now_utc.month, now_utc.day)
+        
+        print(f"[DEBUG] OrderService: user_id={user_id}, today_start_utc={today_start_utc}")
+        
+        existing_order = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.created_at >= today_start_utc,
+            Order.status != OrderStatus.CANCELLED
+        ).first()
 
-            if not active_subscription:
-                 raise HTTPException(
-                    status_code=400,
-                    detail="Бұл тағамдарды алу үшін белсенді абонемент қажет"
-                )
+        if existing_order:
+            print(f"[DEBUG] OrderService: Blocked by order_id={existing_order.id}, created_at={existing_order.created_at}, status={existing_order.status}")
+            raise HTTPException(
+                status_code=400,
+                detail="Сіз бүгін тапсырыс беріп қойдыңыз. Күніне тек бір рет тапсырыс беруге болады."
+            )
 
-            sub = active_subscription.subscription
-            print(f"Subscription details: {sub}")
+        # ---------- Subscription ----------
+        now = datetime.now() # Use local time for business rules
+        
+        print(f"Checking subscription for user_id: {user_id} at local time: {now}")
 
-            from app.models.subscription import SubscriptionMenu
+        paid_by_subscription = False
+        subscription_id = None
+        
+        # EVERY order now requires a subscription
+        # Note: end_date is likely stored in UTC if using utcnow default, 
+        # but for simplicity we compare with now(). If issues persist, we might need to unify.
+        active_subscription = db.query(UserSubscription).filter(
+            UserSubscription.user_id == user_id,
+            UserSubscription.is_active == True,
+            UserSubscription.end_date > datetime.utcnow() # end_date is usually UTC
+        ).first()
+
+        print(f"Active subscription found: {active_subscription}")
+
+        if not active_subscription:
+            raise HTTPException(
+                status_code=400,
+                detail="Тамақ алу үшін белсенді абонемент қажет. Абонемент сатып алыңыз"
+            )
+
+        sub = active_subscription.subscription
+        print(f"Subscription details: {sub}")
+
+        from app.models.subscription import SubscriptionMenu
+        
+        can_use = True
+        
+        # 0. Menu restriction check
+        sub_menu_foods = db.query(SubscriptionMenu.food_id).filter(
+            SubscriptionMenu.subscription_id == sub.id
+        ).all()
+        
+        if sub_menu_foods:
+            allowed_food_ids = [sf[0] for sf in sub_menu_foods]
+            for item in items:
+                if item.food_id not in allowed_food_ids:
+                    raise HTTPException(400, detail="Бұл тағам сіздің абонементіңізге кірмейді")
+
+        # 1. Total usage limit check
+        if active_subscription.remaining_meals is not None and active_subscription.remaining_meals <= 0:
+            raise HTTPException(400, detail="Абонемент бойынша тамақ саны таусылды")
+        
+        # 2. Daily limit check
+        if hasattr(sub, "daily_limit") and sub.daily_limit:
+            # Use local day start
+            today_start_local = datetime(now.year, now.month, now.day)
+            # We need to be careful: if Order.created_at is UTC, we should convert today_start to UTC or compare in UTC.
+            # However, for now let's assume if it's within the same 24h block.
+            # A better way is to compare with UTC range of the local day.
+            # But as a hotfix, let's just use utcnow() for the limit check to stay consistent with DB.
+            now_utc = datetime.utcnow()
+            today_start_utc = datetime(now_utc.year, now_utc.month, now_utc.day)
             
-            can_use = True
-            
-            # 0. Menu restriction check
-            sub_menu_foods = db.query(SubscriptionMenu.food_id).filter(
-                SubscriptionMenu.subscription_id == sub.id
-            ).all()
-            
-            if sub_menu_foods:
-                allowed_food_ids = [sf[0] for sf in sub_menu_foods]
-                for item in items:
-                    if item.food_id not in allowed_food_ids:
-                        raise HTTPException(400, detail="Бұл тағам сіздің абонементіңізге кірмейді")
+            today_used_query = db.query(Order).filter(
+                Order.user_id == user_id,
+                # No longer restriction on subscription_id specifically, just one order per day total
+                Order.created_at >= today_start_utc,
+                Order.paid_by_subscription == True,
+                Order.status != OrderStatus.CANCELLED
+            )
+            today_used = today_used_query.count()
 
-            # 1. Total usage limit check
-            if active_subscription.remaining_meals is not None and active_subscription.remaining_meals <= 0:
-                raise HTTPException(400, detail="Абонемент бойынша тамақ саны таусылды")
-            
-            # 2. Daily limit check
-            if hasattr(sub, "daily_limit") and sub.daily_limit:
-                # Use local day start
-                today_start_local = datetime(now.year, now.month, now.day)
-                # We need to be careful: if Order.created_at is UTC, we should convert today_start to UTC or compare in UTC.
-                # However, for now let's assume if it's within the same 24h block.
-                # A better way is to compare with UTC range of the local day.
-                # But as a hotfix, let's just use utcnow() for the limit check to stay consistent with DB.
-                now_utc = datetime.utcnow()
-                today_start_utc = datetime(now_utc.year, now_utc.month, now_utc.day)
-                
-                today_used = db.query(Order).filter(
-                    Order.user_id == user_id,
-                    Order.subscription_id == sub.id,
-                    Order.created_at >= today_start_utc,
-                    Order.paid_by_subscription == True
-                ).count()
+            print(f"[DEBUG] OrderService (sub check): daily_limit={sub.daily_limit}, today_used={today_used}")
+            if today_used >= sub.daily_limit:
+                already_ordered = today_used_query.first()
+                print(f"[DEBUG] OrderService (sub check): Blocked by order_id={already_ordered.id}, status={already_ordered.status}")
+                raise HTTPException(400, detail="Бүгінгі күндік лимит аяқталды")
 
-                if today_used >= sub.daily_limit:
-                    raise HTTPException(400, detail=f"Абонементтің күнделікті лимиті ({sub.daily_limit} рет) таусылды")
+        # 3. Time window check
+        if hasattr(sub, "allowed_from") and sub.allowed_from and sub.allowed_to:
+            pass # Уақыт тексеруді уақытша өшірдік
+            # current_time = now.time() # This is LOCAL time
+            # if not (sub.allowed_from <= current_time <= sub.allowed_to):
+            #     raise HTTPException(400, detail=f"Абонемент тек {sub.allowed_from.strftime('%H:%M')} - {sub.allowed_to.strftime('%H:%M')} арасында жұмыс істейді. Қазіргі уақыт: {current_time.strftime('%H:%M')}")
 
-            # 3. Time window check
-            if hasattr(sub, "allowed_from") and sub.allowed_from and sub.allowed_to:
-                current_time = now.time() # This is LOCAL time
-                if not (sub.allowed_from <= current_time <= sub.allowed_to):
-                    raise HTTPException(400, detail=f"Абонемент тек {sub.allowed_from.strftime('%H:%M')} - {sub.allowed_to.strftime('%H:%M')} арасында жұмыс істейді. Қазіргі уақыт: {current_time.strftime('%H:%M')}")
-
-            # If all checks pass
-            active_subscription.remaining_meals -= 1
-            paid_by_subscription = True
-            subscription_id = sub.id
-            print("Subscription validated and applied successfully")
+        # If all checks pass
+        active_subscription.remaining_meals -= 1
+        paid_by_subscription = True
+        subscription_id = sub.id
+        print("Subscription validated and applied successfully")
         
         if not paid_by_subscription:
             print("Proceeding without subscription (either none found or limits reached)")
@@ -175,7 +208,6 @@ class OrderService:
         new_order = Order(
             user_id=user_id,
             branch_id=branch_id,
-            total_price=total_price,
             status=OrderStatus.PENDING,
             qr_code=qr_token,
             qr_expire_at=qr_expire,
@@ -255,9 +287,9 @@ class OrderService:
             order_id=order.id,
             subscription_id=order.subscription_id,
             user_id=order.user_id,
-            amount=order.total_price,
-            discount_amount=0,
-            final_amount=order.total_price,
+            amount=0.0,
+            discount_amount=0.0,
+            final_amount=0.0,
         )
         db.add(revenue)
         
@@ -266,12 +298,14 @@ class OrderService:
         return order
     
     @staticmethod
-    def generate_order_qr(db: Session, order_id: int, branch_id: int) -> dict:
+    def generate_order_qr(db: Session, order_id: int, branch_id: int = None) -> dict:
         """Кассир үшін заказқа арналған QR код генерациялау"""
-        order = db.query(Order).filter(
-            Order.id == order_id,
-            Order.branch_id == branch_id
-        ).first()
+        query = db.query(Order).filter(Order.id == order_id)
+        
+        if branch_id is not None:
+            query = query.filter(Order.branch_id == branch_id)
+            
+        order = query.first()
         
         if not order:
             raise HTTPException(
@@ -347,9 +381,9 @@ class OrderService:
             order_id=order.id,
             subscription_id=order.subscription_id,
             user_id=order.user_id,
-            amount=order.total_price,
-            discount_amount=0,
-            final_amount=order.total_price,
+            amount=0.0,
+            discount_amount=0.0,
+            final_amount=0.0,
         )
         db.add(revenue)
         
@@ -417,9 +451,9 @@ class OrderService:
             order_id=order.id,
             subscription_id=order.subscription_id,
             user_id=order.user_id,
-            amount=order.total_price,
-            discount_amount=0,
-            final_amount=order.total_price,
+            amount=0.0,
+            discount_amount=0.0,
+            final_amount=0.0,
         )
         db.add(revenue)
 

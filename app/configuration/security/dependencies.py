@@ -1,18 +1,30 @@
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import HTTPBearer, APIKeyCookie
 from sqlalchemy.orm import Session
 from app.database.connection import get_db
 from app.service import AuthService
 from app.models.user import User, UserRole
 
-security = HTTPBearer()
+# For Swagger UI to show where to put the token, we can use APIKeyCookie
+cookie_scheme = APIKeyCookie(name="access_token", auto_error=False)
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    token: str = Depends(cookie_scheme),
     db: Session = Depends(get_db)
 ) -> User:
     """Ағымдағы қолданушыны алу"""
-    token = credentials.credentials
+    if not token:
+        # Fallback to authorization header in case frontend hasn't updated or we're using mobile apps
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+        
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Сенімхат берілмеген"
+            )
     return AuthService.get_current_user(db, token)
 
 def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:

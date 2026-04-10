@@ -12,8 +12,8 @@ class SubscriptionService:
         return db.query(Subscription).filter(Subscription.is_active == True).all()
     
     @staticmethod
-    def purchase_subscription(db: Session, user_id: int, subscription_id: int) -> UserSubscription:
-        """Абонемент сатып алу"""
+    def purchase_subscription(db: Session, user_id: int, subscription_id: int, receipt_url: str) -> UserSubscription:
+        """Абонемент сатып алу өтініші (PENDING)"""
         # Абонементті тексеру
         subscription = db.query(Subscription).filter(
             Subscription.id == subscription_id,
@@ -34,7 +34,7 @@ class SubscriptionService:
                 detail="Қолданушы табылмады"
             )
         
-        # Белсенді абонементті тексеру - Егер бар болса, тағы біреуін алуға рұқсат бермейміз
+        # Белсенді немесе күтілудегі абонементті тексеру
         active_sub = db.query(UserSubscription).filter(
             UserSubscription.user_id == user_id,
             UserSubscription.is_active == True,
@@ -46,8 +46,19 @@ class SubscriptionService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Сізде белсенді абонемент бар. Жаңасын алу үшін алдымен қазіргі абонементті тоқтатыңыз."
             )
+            
+        pending_sub = db.query(UserSubscription).filter(
+            UserSubscription.user_id == user_id,
+            UserSubscription.status == "PENDING"
+        ).first()
         
-        # Жаңа абонемент жасау
+        if pending_sub:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Сізде қаралып жатқан абонемент өтініші бар. Күте тұрыңыз."
+            )
+        
+        # Жаңа абонемент жасау (Уақытша мерзім орнату, мақұлданған кезде жаңартылады)
         start_date = datetime.utcnow()
         end_date = start_date + timedelta(days=subscription.duration_days)
         
@@ -57,7 +68,9 @@ class SubscriptionService:
             start_date=start_date,
             end_date=end_date,
             remaining_meals=subscription.meal_limit,
-            is_active=True
+            is_active=False,
+            status="PENDING",
+            receipt_url=receipt_url
         )
         
         db.add(new_subscription)
@@ -67,22 +80,25 @@ class SubscriptionService:
     
     @staticmethod
     def cancel_subscription(db: Session, user_id: int):
-        """Қолданушының белсенді абонементін тоқтату"""
-        active_sub = db.query(UserSubscription).filter(
+        """Қолданушының абонементін тоқтату"""
+        # Тек қана белсенді емес, барлық жарамды немесе күтілудегі абонементтерді тоқтату
+        subs_to_cancel = db.query(UserSubscription).filter(
             UserSubscription.user_id == user_id,
-            UserSubscription.is_active == True,
-            UserSubscription.end_date > datetime.utcnow()
-        ).first()
+            UserSubscription.status.in_(["PENDING", "ACTIVE", "APPROVED"])
+        ).all()
         
-        if not active_sub:
+        if not subs_to_cancel:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Белсенді абонемент табылмады"
+                detail="Белсенді немесе күтілудегі абонемент табылмады"
             )
         
-        active_sub.is_active = False
+        for sub in subs_to_cancel:
+            sub.is_active = False
+            sub.status = "CANCELLED"
+            
         db.commit()
-        return {"message": "Абонемент тоқтатылды"}
+        return {"message": "Барлық абонементтер тоқтатылды"}
 
     @staticmethod
     def get_user_subscription(db: Session, user_id: int):
@@ -92,3 +108,11 @@ class SubscriptionService:
             UserSubscription.is_active == True,
             UserSubscription.end_date > datetime.utcnow()
         ).first()
+
+    @staticmethod
+    def get_latest_user_subscription(db: Session, user_id: int):
+        """Қолданушының соңғы абонементін алу (статусына қарамастан)"""
+        from sqlalchemy.orm import joinedload
+        return db.query(UserSubscription).options(joinedload(UserSubscription.subscription)).filter(
+            UserSubscription.user_id == user_id
+        ).order_by(UserSubscription.id.desc()).first()

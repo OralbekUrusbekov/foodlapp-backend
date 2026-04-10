@@ -9,7 +9,6 @@ class SubscriptionResponse(BaseModel):
     price: float
     duration_days: int
     meal_limit: Optional[int]
-    discount_percentage: Optional[float] = 0.0
     is_active: bool
     
     class Config:
@@ -22,6 +21,8 @@ class UserSubscriptionResponse(BaseModel):
     end_date: datetime
     remaining_meals: Optional[int]
     is_active: bool
+    status: str
+    receipt_url: Optional[str] = None
     
     class Config:
         from_attributes = True

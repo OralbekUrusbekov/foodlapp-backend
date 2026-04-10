@@ -19,3 +19,7 @@ pyjwt
 aiohttp
 pydantic_settings
 google-genai
+slowapi
+fastapi-cache2[redis]
+redis
+boto3

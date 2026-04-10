@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, date
 from typing import Optional
 
 from app.database.connection import get_db
-from app.configuration.security.dependencies import get_admin_user
+from app.configuration.security.dependencies import get_admin_user, get_owner_user
 from app.models.user import User, UserRole
 from app.models.branch import Branch
 from app.models.restaurant import Restaurant
@@ -211,7 +211,6 @@ def delete_canteen_admin(
 class CreateRegularFoodRequest(BaseModel):
     name: str
     description: str | None = None
-    price: float
     calories: int | None = None
     ingredients: str | None = None
     image_url: str | None = None
@@ -220,7 +219,7 @@ class CreateRegularFoodRequest(BaseModel):
 def create_regular_food(
     food_data: CreateRegularFoodRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_admin_user)
+    current_user: User = Depends(get_owner_user)
 ):
     """Жалпы сатылымға арналған жаңа тағам қосу (Кәдімгі мәзір)"""
     from app.models.food import Food, MenuType
@@ -229,7 +228,6 @@ def create_regular_food(
     food = Food(
         name=food_data.name,
         description=food_data.description,
-        price=food_data.price,
         calories=food_data.calories,
         ingredients=food_data.ingredients,
         image_url=food_data.image_url,
@@ -244,7 +242,6 @@ def create_regular_food(
         "id": food.id,
         "name": food.name,
         "description": food.description,
-        "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
         "image_url": food.image_url,
@@ -254,7 +251,7 @@ def create_regular_food(
 @router.get("/foods")
 def get_regular_foods(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_admin_user)
+    current_user: User = Depends(get_owner_user)
 ):
     """Админнің ресторанына тиесілі барлық кәдімгі тағамдарды алу"""
     from app.models.food import Food, MenuType
@@ -270,7 +267,6 @@ def get_regular_foods(
             "id": f.id,
             "name": f.name,
             "description": f.description,
-            "price": f.price,
             "calories": f.calories,
             "ingredients": f.ingredients,
             "image_url": f.image_url,
@@ -282,7 +278,6 @@ def get_regular_foods(
 class UpdateRegularFoodRequest(BaseModel):
     name: str | None = None
     description: str | None = None
-    price: float | None = None
     calories: int | None = None
     ingredients: str | None = None
     image_url: str | None = None
@@ -292,7 +287,7 @@ def update_regular_food(
     food_id: int,
     food_data: UpdateRegularFoodRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_admin_user)
+    current_user: User = Depends(get_owner_user)
 ):
     """Кәдімгі тағамды жаңарту"""
     from app.models.food import Food, MenuType
@@ -317,7 +312,6 @@ def update_regular_food(
         "id": food.id,
         "name": food.name,
         "description": food.description,
-        "price": food.price,
         "calories": food.calories,
         "ingredients": food.ingredients,
         "image_url": food.image_url,
@@ -328,7 +322,7 @@ def update_regular_food(
 def delete_regular_food(
     food_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_admin_user)
+    current_user: User = Depends(get_owner_user)
 ):
     """Кәдімгі тағамды өшіру"""
     from app.models.food import Food, MenuType

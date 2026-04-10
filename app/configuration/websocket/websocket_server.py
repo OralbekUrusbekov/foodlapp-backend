@@ -59,7 +59,7 @@ class WebSocketManager:
         self.connection_roles[connection_id] = role
         
         # Филиалға байланысты сақтау
-        if branch_id:
+        if branch_id is not None:
             if branch_id not in self.branch_connections:
                 self.branch_connections[branch_id] = set()
             self.branch_connections[branch_id].add(websocket)
@@ -121,12 +121,16 @@ class WebSocketManager:
             return
         
         disconnected = set()
+        count = 0
         for connection in self.active_connections[role]:
             try:
                 await connection.send_text(json.dumps(message))
+                count += 1
             except Exception as e:
                 logger.error(f"Рөлге хабарлама жіберу қатесі: {e}")
                 disconnected.add(connection)
+        
+        logger.info(f"Broadcast to role '{role}' completed. Sent to {count} connections.")
         
         # Үзілген байланыстарды жою
         for connection in disconnected:
@@ -138,12 +142,16 @@ class WebSocketManager:
             return
         
         disconnected = set()
+        count = 0
         for connection in self.branch_connections[branch_id]:
             try:
                 await connection.send_text(json.dumps(message))
+                count += 1
             except Exception as e:
                 logger.error(f"Филиалға хабарлама жіберу қатесі: {e}")
                 disconnected.add(connection)
+        
+        logger.info(f"Broadcast to branch '{branch_id}' completed. Sent to {count} connections.")
         
         # Үзілген байланыстарды жою
         for connection in disconnected:
@@ -172,16 +180,18 @@ class WebSocketManager:
             "data": order_data
         }
         
-        # Кассирлерге жіберу
-        await self.broadcast_to_role(message, "cashier")
+        # Егер филиал белгілі болса, сол филиалға жіберу (Кассирлерді қоса алғанда)
+        if "branch_id" in order_data:
+            await self.broadcast_to_branch(message, order_data["branch_id"])
         
         # Админдерге жіберу
         await self.broadcast_to_role(message, "admin")
         await self.broadcast_to_role(message, "canteen_admin")
         
-        # Егер филиал белгілі болса, сол филиалға да жіберу
-        if "branch_id" in order_data:
-            await self.broadcast_to_branch(message, order_data["branch_id"])
+        # Қосымша: кассирлерге рөл бойынша жіберу (егер филиал бойынша сүзгіден өтпей қалса)
+        await self.broadcast_to_role(message, "cashier")
+        
+        # Already handled above via branch broadcast if present
 
         # Пайдаланушының өзіне жіберу (Клиент үшін маңызды)
         if "user_id" in order_data:
@@ -194,16 +204,18 @@ class WebSocketManager:
             "data": order_data
         }
         
-        # Кассирлерге жіберу
-        await self.broadcast_to_role(message, "cashier")
+        # Егер филиал белгілі болса, сол филиалға жіберу (Кассирлерді қоса алғанда)
+        if "branch_id" in order_data:
+            await self.broadcast_to_branch(message, order_data["branch_id"])
         
         # Админдерге жіберу
         await self.broadcast_to_role(message, "admin")
         await self.broadcast_to_role(message, "canteen_admin")
         
-        # Егер филиал белгілі болса, сол филиалға да жіберу
-        if "branch_id" in order_data:
-            await self.broadcast_to_branch(message, order_data["branch_id"])
+        # Қосымша: кассирлерге рөл бойынша жіберу
+        await self.broadcast_to_role(message, "cashier")
+        
+        # Already handled above via branch broadcast if present
 
     async def send_notification(self, title: str, message: str, role: str = None, branch_id: int = None, notification_type: str = "system", data: dict = None):
         """Уведомлениелерді жіберу"""

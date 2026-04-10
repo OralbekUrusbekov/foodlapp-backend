@@ -66,6 +66,7 @@ class AuthService:
     def register_user(db: Session, full_name: str, email: str, password: str, is_email_verified: bool = False) -> User:
         """Жаңа клиент қолданушыны тіркеу"""
         # Email тексеру
+        email = email.lower().strip()
         if db.query(User).filter(User.email == email).first():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -92,9 +93,22 @@ class AuthService:
     @staticmethod
     def authenticate_user(db: Session, email: str, password: str) -> User:
         """Қолданушыны аутентификациялау"""
+        email = email.lower().strip()
         user = db.query(User).filter(User.email == email).first()
         
-        if not user or not AuthService.verify_password(password, user.hashed_password):
+        print(f"[DEBUG] authenticate_user: email={email}, user_found={user is not None}")
+        
+        if not user:
+             print(f"[DEBUG] authenticate_user FAIL: user not found")
+             raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Email немесе пароль қате"
+            )
+
+        password_correct = AuthService.verify_password(password, user.hashed_password)
+        print(f"[DEBUG] authenticate_user: password_correct={password_correct}")
+
+        if not password_correct:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Email немесе пароль қате"

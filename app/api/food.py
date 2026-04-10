@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from sqlalchemy.orm import Session
 from app.database.connection import get_db
 from app.models.FoodImage import FoodImage
-from app.models.food import Food
+from app.models.food import Food, MenuType
 from app.models.user import User
-from app.configuration.security.dependencies import get_canteen_admin_user
+from app.configuration.security.dependencies import get_canteen_admin_user, get_owner_user
 from app.utils.s3_upload import upload_file_to_s3
 
 router = APIRouter()
@@ -15,7 +15,6 @@ from fastapi import UploadFile, File, Form
 @router.post("/foods", status_code=201)
 def create_food(
     name: str = Form(...),
-    price: float = Form(...),
     description: str = Form(None),
     calories: int = Form(None),
     ingredients: str = Form(None),
@@ -23,20 +22,21 @@ def create_food(
     images: List[UploadFile] = File(...),
 
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_canteen_admin_user)
+    current_user: User = Depends(get_owner_user)
 ):
-    if not current_user.branch_id:
-        raise HTTPException(status_code=400, detail="Филиал жоқ")
-
+    # Тек Owner қоса алады, branch_id қажет емес немесе басқаша өңделеді
+    # Бірақ бұл жерде бұрынғы логика бойынша branch_id қолданылып келген.
+    # User сұрауы бойынша "Тек қана овнер абономентке арналған мәзерді қоса алады"
+    # Сондықтан бұл жерде branch_id тексерісін алып тастаймыз немесе Owner-ге сәйкестендіреміз.
+    
     # 📌 Food create
     new_food = Food(
         name=name,
-        price=price,
         description=description,
         calories=calories,
         ingredients=ingredients,
-        is_available=is_available,
-        branch_id=current_user.branch_id
+        menu_type=MenuType.SUBSCRIPTION, # Always subscription
+        owner_id=current_user.id
     )
 
     db.add(new_food)
@@ -79,7 +79,7 @@ def add_food_images(
     food_id: int,
     images: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_canteen_admin_user)
+    current_user: User = Depends(get_owner_user)
 ):
     food = db.query(Food).filter(Food.id == food_id).first()
 
