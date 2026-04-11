@@ -231,8 +231,12 @@ class OrderService:
 
     @staticmethod
     def get_user_orders(db: Session, user_id: int):
-        """Қолданушының заказдарын алу"""
-        return db.query(Order).filter(Order.user_id == user_id).order_by(Order.created_at.desc()).all()
+        """Қолданушының заказдарын алу (Оптимизацияланған)"""
+        from sqlalchemy.orm import joinedload
+        return db.query(Order).options(
+            joinedload(Order.items),
+            joinedload(Order.branch)
+        ).filter(Order.user_id == user_id).order_by(Order.created_at.desc()).limit(30).all()
     
     @staticmethod
     def get_user_order_by_id(db: Session, user_id: int, order_id: int):

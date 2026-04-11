@@ -129,6 +129,7 @@ def check_sub_limit_status(sub_record, db, user_id):
 
 
 @router.get("/foods/{branch_id}")
+@cache(expire=300)
 def get_foods(branch_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Филиал бойынша қолжетімді тағамдарды алу"""
     from app.models.food import Food, MenuType
@@ -364,6 +365,7 @@ async def scan_order_qr(qr_code: str, db: Session = Depends(get_db), current_use
     return result
 
 @router.get("/menu/today")
+@cache(expire=300)
 def get_today_menu(db: Session = Depends(get_db), current_user: User = Depends(get_client_user)):
     """Бүгінгі мәзірді көру"""
     from app.models.food import Food
