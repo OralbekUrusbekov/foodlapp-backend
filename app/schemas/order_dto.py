@@ -18,7 +18,7 @@ class CreateOrderRequest(BaseModel):
 
 class OrderItemResponse(BaseModel):
     id: int
-    food_id: int
+    food_id: Optional[int]
     food_name: str
     quantity: int
     
